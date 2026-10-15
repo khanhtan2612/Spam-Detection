@@ -1,110 +1,112 @@
 # Ứng dụng SVD và PCA trong phát hiện tin nhắn rác (Spam Detection)
 
-Đồ án môn Toán cho Khoa học Máy tính. Đồ án cài đặt từ đầu Singular Value Decomposition (SVD) và Principal Component Analysis (PCA) bằng NumPy (SVD qua trị riêng của $A^\mathsf{T}A$, randomized SVD, PCA tâm hóa ngầm trên ma trận thưa), kiểm chứng với scikit-learn, và dùng chúng để giảm chiều biểu diễn TF-IDF của tin nhắn SMS trước một bộ phân loại logistic regression. Ba kết quả lý thuyết (tồn tại SVD, PCA là SVD của dữ liệu tâm hóa, Eckart–Young–Mirsky) được chứng minh trong `slide/script.md` và kiểm tra bằng số trong notebook.
+Đồ án môn Toán cho Khoa học Máy tính. Đồ án nghiên cứu Singular Value Decomposition (SVD) và Principal Component Analysis (PCA) ở hai mặt: chứng minh các kết quả lý thuyết nền tảng, và cài đặt từ đầu bằng NumPy để giảm chiều biểu diễn TF-IDF của tin nhắn SMS trước một bộ phân loại logistic regression. Các kết quả lý thuyết chính được kiểm tra bằng số, phần lớn trên chính ma trận TF-IDF của bài toán.
 
-## Cấu trúc thư mục
+## Nội dung chính
+
+- **Lý thuyết** (`slide/script.md`): chứng minh xây dựng sự tồn tại của SVD qua chéo hóa $A^\mathsf{T}A$; PCA là bài toán cực đại phương sai và bằng SVD của dữ liệu đã tâm hóa; định lý Eckart–Young–Mirsky về xấp xỉ hạng thấp tối ưu theo chuẩn Frobenius; áp dụng cho văn bản (TF-IDF, LSA, thủ thuật Gram khi $n \lt d$, tâm hóa ngầm cho ma trận thưa, randomized SVD).
+- **Cài đặt** (`spam_svd_pca.ipynb`): SVD qua trị riêng của $A^\mathsf{T}A$ theo đúng chứng minh; randomized SVD theo Halko–Martinsson–Tropp; PCA trên ma trận thưa không tạo ma trận tâm hóa đặc; bộ đệm phân rã chính xác (toàn phổ và 1000 vectơ kỳ dị phải đầu) dùng chung cho mọi số chiều $k \le 1000$.
+- **Kiểm chứng**: đối chiếu với `numpy.linalg.svd` và với `TruncatedSVD`, `PCA` của scikit-learn; kiểm tra Eckart–Young, PCA = SVD của dữ liệu tâm hóa, tính không tương quan của các thành phần chính, vai trò của tâm hóa.
+- **Ứng dụng**: so sánh logistic regression trên TF-IDF đầy đủ, trên đặc trưng LSA và trên đặc trưng PCA, với số chiều $k$ chọn trên tập validation.
+
+## Cấu trúc bài nộp
 
 ```
 Spam-Detection/
 ├── README.md                # tài liệu này
-├── requirements.txt         # numpy, scipy, pandas, matplotlib, scikit-learn>=1.4, jupyter
-├── spam_svd_pca.ipynb       # notebook chính, đã chạy sẵn và lưu output
-├── spam_svd_pca.md          # bản xuất Markdown của notebook (nbconvert)
-├── spam_svd_pca_files/      # 5 hình do nbconvert xuất ra
-├── data/SMSSpamCollection   # bộ dữ liệu UCI (5.574 dòng)
+├── requirements.txt         # thư viện sử dụng
+├── spam_svd_pca.ipynb       # notebook chính, đã chạy sẵn và lưu toàn bộ output
+├── spam_svd_pca.md          # bản Markdown của notebook, đọc được không cần Jupyter
+├── spam_svd_pca_files/      # 5 hình của notebook
+├── data/SMSSpamCollection   # bộ dữ liệu SMS Spam Collection (UCI), 5.574 tin
 └── slide/script.md          # cơ sở toán học: định nghĩa, định lý, chứng minh, công thức (1)–(30)
 ```
 
-## Cài đặt và chạy
+## Thứ tự đọc
 
-```powershell
-git clone https://github.com/khanhtan2612/Spam-Detection.git
-cd Spam-Detection
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1          # macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
-```
+1. `slide/script.md`, PHẦN 1–3: ba chứng minh chính (Định lý 1, Định lý 3 cùng Mệnh đề 4, Định lý 5).
+2. `slide/script.md`, PHẦN 4: cách các kết quả trên được dùng cho dữ liệu văn bản, cũng là cơ sở của từng thuật toán trong notebook.
+3. `spam_svd_pca.ipynb` (hoặc `spam_svd_pca.md`): cài đặt, kiểm chứng và kết quả. Bảng dưới đây ghi mục tương ứng trong `slide/script.md` cho từng phần của notebook.
+4. `slide/script.md`, PHẦN 5: tổng hợp, liên hệ lý thuyết với số liệu thực nghiệm.
 
-Mở `spam_svd_pca.ipynb` trong VS Code (extension Python và Jupyter), chọn kernel `.venv` bằng nút **Select Kernel**, rồi bấm **Run All**. Notebook tự tải dữ liệu nếu `data/SMSSpamCollection` chưa có. Chạy từ dòng lệnh:
+## Đối chiếu notebook với phần lý thuyết
 
-```powershell
-jupyter nbconvert --to notebook --execute --inplace spam_svd_pca.ipynb
-jupyter nbconvert --to markdown spam_svd_pca.ipynb
-```
-
-Thời gian chạy toàn bộ đo bằng lệnh trên là **61 giây** (51 giây trong kernel; các lần chạy khác trên cùng máy từ 55 đến 61 giây), trên Windows 11, CPU AMD 16 luồng logic, Python 3.14.7, NumPy 2.5.4, SciPy 1.18.1, scikit-learn 1.9.1. Mọi phép ngẫu nhiên dùng `RANDOM_STATE = 42`; chỉ các số đo thời gian thay đổi theo máy.
-
-## Quy trình
-
-```
-SMSSpamCollection: 5.574 tin (4.827 ham, 747 spam)
-  │ normalize_text: html.unescape → chữ thường → email → URL → tiền → số điện thoại → số → bỏ ký tự lạ
-  │ bỏ 2 dòng có clean rỗng
-  │ loại nhóm clean mang nhiều nhãn: 0 nhóm
-  │ loại trùng theo clean: bỏ 476 dòng
-  ▼
-5.096 tin (4.500 ham, 596 spam)
-  │ chia 80/20, stratify, seed 42
-  ├──► test: 1.020 tin (119 spam), chỉ dùng ở bước đánh giá cuối
-  ▼
-train: 4.076 tin (477 spam) ── chia 75/25 ──► sub-train 3.057 + validation 1.019
-  │                                            │ TF-IDF riêng: X_sub 3057 × 4204
-  │ TF-IDF (1–2 gram, min_df=2,                │ bộ đệm F_sub, F_sub_c (2 lần eigh)
-  │   sublinear_tf, stop words)                │ quét k ∈ {2, 10, 50, 100, 300, 1000}
-  ▼                                            ▼ chọn k theo F1 validation
-X_train 4076 × 5445 (thưa, 0,16% khác 0)
-  │ bộ đệm F_train, F_train_c (2 lần eigh của Gram 4076 × 4076)
-  ├── kiểm chứng: svd_via_eig, randomized SVD, scikit-learn, Eckart–Young, PCA = SVD(X_c), góc chính
-  └── LSA / PCA với k đã chọn → LogisticRegression(C=1, balanced) → đánh giá trên test
-```
-
-Loại trùng làm trên văn bản đã chuẩn hóa, sau khi loại nhãn mâu thuẫn: nhiều tin spam cùng mẫu chỉ khác số điện thoại trở thành cùng một chuỗi `clean`. Notebook `assert` rằng tập `clean` của test không giao train và của validation không giao sub-train.
-
-## Hướng dẫn đọc notebook
-
-| Mục trong notebook | Làm gì | Công thức / định lý trong `slide/script.md` |
+| Mục trong notebook | Nội dung | Công thức / định lý trong `slide/script.md` |
 |---|---|---|
 | Bộ dữ liệu sử dụng | Giới thiệu bộ dữ liệu và mục tiêu | |
-| Tải và đọc dữ liệu | Tải từ UCI (có mirror), đọc với `quoting=3` | |
-| Mô tả dữ liệu | Phân bố nhãn, độ dài tin theo lớp, 2 tin mẫu mỗi lớp | |
-| Tiền xử lý | `normalize_text` với 12 `assert`; làm sạch, loại trùng theo `clean`, chia tập; TF-IDF | (25) |
-| Cài đặt SVD và PCA từ đầu | `svd_via_eig`; toán tử thưa và tâm hóa ngầm; randomized SVD; bộ đệm `exact_factors` (một lần `eigh` Gram cho mỗi ma trận và chế độ tâm hóa); `TruncatedSVDScratch`, `PCAScratch`; kiểm chứng tại $k = 50$ với ARPACK | Định lý 1, (3)–(5), (8), (14), (18), (27)–(29), mục 4.5–4.6 |
-| Phổ giá trị kỳ dị | Toàn phổ, năng lượng tích lũy, $\sum\sigma_i^2 = \Vert X\Vert_F^2$ | (8) |
-| Trực quan hóa tin nhắn trong không gian 2 chiều | Scatter hai thành phần đầu của LSA và PCA | mục 2.6 |
-| Diễn giải các thành phần | 3 PC đầu, từ có trọng số lớn nhất, tương quan với nhãn | mục 4.2 |
-| Xây dựng mô hình | `ReducedClassifier`, đo riêng phân rã, tạo đặc trưng và classifier | (26) |
-| Chọn số thành phần $k$ | Quét $k$ trên bộ đệm sub-train, quy tắc chọn cố định trước | mục 3.4 |
-| Kiểm chứng lý thuyết bằng thực nghiệm | Eckart–Young qua đồng nhất thức phần dư; PCA = SVD($X_c$); tâm hóa, góc chính LSA–PCA | Định lý 5, (22); Định lý 3, Mệnh đề 4, (19) |
-| Đánh giá cuối cùng trên tập test | Bảng metric, confusion matrix + ROC, lỗi của mô hình được chọn | |
-| Thử mô hình với tin nhắn mới | `predict_messages` trên 4 tin tự viết | (26) |
-| Kết luận | Tóm tắt từ số liệu của lần chạy này | PHẦN 5 |
+| Tải và đọc dữ liệu | Đọc file với `quoting=3` vì nhiều tin có dấu nháy không khép | |
+| Mô tả dữ liệu | Phân bố nhãn, độ dài tin theo lớp, tin mẫu | |
+| Tiền xử lý | Chuẩn hóa văn bản (kèm 12 phép kiểm tra), loại trùng theo văn bản đã chuẩn hóa, chia tập, TF-IDF | (25) |
+| Cài đặt SVD và PCA từ đầu | `svd_via_eig`; toán tử thưa và tâm hóa ngầm; randomized SVD; bộ đệm `exact_factors`; `TruncatedSVDScratch`, `PCAScratch`; đối chiếu với scikit-learn tại $k = 50$ | Định lý 1, (3)–(5), (8), (14), (18), (27)–(29), mục 4.5–4.6 |
+| Phổ giá trị kỳ dị | Toàn phổ, năng lượng tích lũy, kiểm tra $\sum\sigma_i^2 = \Vert X\Vert_F^2$ | (8) |
+| Trực quan hóa tin nhắn trong không gian 2 chiều | Hai thành phần đầu của LSA và PCA | mục 2.6 |
+| Diễn giải các thành phần | Ba thành phần chính đầu, từ có trọng số lớn nhất, tương quan với nhãn | mục 4.2 |
+| Xây dựng mô hình | Reducer + logistic regression, không chuẩn hóa lại sau phép chiếu | (26), mục 4.2 |
+| Chọn số thành phần $k$ | Quét $k$ trên tập validation với quy tắc chọn cố định trước | mục 3.4 |
+| Kiểm chứng lý thuyết bằng thực nghiệm | Eckart–Young qua đồng nhất thức phần dư; PCA = SVD($X_c$); tâm hóa; góc chính giữa không gian con LSA và PCA | Định lý 5, (22); Định lý 3, Mệnh đề 4, (19) |
+| Đánh giá cuối cùng trên tập test | Bảng metric, confusion matrix, ROC, các tin bị phân loại sai | |
+| Thử mô hình với tin nhắn mới | Dự đoán cho 4 tin tự viết | (26) |
+| Kết luận | Tổng hợp từ số liệu của lần chạy | PHẦN 5 |
 
-## Kết quả trên tập test
+## Một số lựa chọn thiết kế
 
-Quét $k$ trên validation: LSA và PCA cùng đạt F1 cao nhất 0,9205 tại $k = 300$ (baseline 0,9283). Theo quy tắc chọn (hòa thì LSA), mô hình giảm chiều được chọn là LSA với $k = 300$. Tập test có 1.020 tin, trong đó 119 spam.
+- **Loại trùng sau khi chuẩn hóa.** Nhiều tin spam cùng mẫu, chỉ khác số điện thoại hay số tiền, trở thành cùng một chuỗi sau khi chuẩn hóa. Nếu loại trùng trên văn bản gốc, các bản gần giống nhau có thể rơi vào cả tập huấn luyện lẫn tập kiểm tra và làm kết quả lạc quan. Vì vậy dữ liệu được chuẩn hóa trước, loại các nhóm mang nhãn mâu thuẫn, rồi mới loại trùng (476 dòng). Notebook kiểm tra bằng `assert` rằng tập test không có tin nào trùng với tập train sau chuẩn hóa.
+- **Nghiệm chính xác qua ma trận Gram.** Vì số tài liệu nhỏ hơn số từ ($4076 \lt 5445$ với tập huấn luyện, $3057 \lt 4204$ với sub-train), SVD chính xác được tính bằng một lần chéo hóa ma trận Gram $n \times n$ cho mỗi cặp (ma trận, chế độ tâm hóa): $4076 \times 4076$ cho tập huấn luyện và $3057 \times 3057$ cho sub-train dùng khi chọn $k$. Toàn notebook chỉ có bốn lần chéo hóa ma trận Gram của dữ liệu; mọi giá trị $k \le 1000$ đều cắt từ kết quả đó, vì nghiệm $k$ thành phần đầu của SVD chính xác lồng nhau theo $k$. Randomized SVD được giữ lại như thuật toán cho trường hợp ma trận lớn hơn và được kiểm chứng riêng.
+- **Tách tập chọn mô hình và tập đánh giá.** Số chiều $k$ được chọn trong lưới $\lbrace 2, 10, 50, 100, 300, 1000\rbrace$ trên tập validation theo quy tắc cố định trước (F1 cao nhất, hòa thì chọn $k$ nhỏ hơn; giữa LSA và PCA, hòa thì chọn LSA). Tập test chỉ được dùng một lần ở bước cuối.
+- **Không chuẩn hóa lại đặc trưng sau phép chiếu.** $V_k$ có cột trực chuẩn nên phép chiếu giữ nguyên khoảng cách và góc trong không gian con; chuẩn hóa lại sẽ khuếch đại các hướng có phương sai nhỏ.
 
-| Mô hình | Số đặc trưng | Accuracy | Precision | Recall | F1 (spam) | ROC-AUC | Thời gian huấn luyện, gồm chuẩn bị cache $k_{\max} = 1000$ (s) |
-|---|---|---|---|---|---|---|---|
-| Baseline (TF-IDF) | 5445 | 0,9814 | 0,9237 | 0,9160 | 0,9198 | 0,9917 | 0,02 |
-| LSA ($k = 300$) | 300 | 0,9784 | 0,8943 | 0,9244 | 0,9091 | 0,9864 | 5,56 |
-| PCA ($k = 300$) | 300 | 0,9784 | 0,8943 | 0,9244 | 0,9091 | 0,9862 | 6,03 |
+## Dữ liệu
 
-Cột thời gian bằng tổng: phân rã chính xác (5,53 s với LSA, 6,00 s với PCA, cho toàn phổ và 1000 vectơ) + tạo đặc trưng $XV_k$ tại $k = 300$ (khoảng 0,01 s) + huấn luyện classifier (khoảng 0,02 s). Đây không phải thời gian huấn luyện độc lập tại $k = 300$.
+| Bước | Số tin |
+|---|---|
+| Dữ liệu gốc | 5.574 (4.827 ham, 747 spam) |
+| Bỏ tin rỗng sau chuẩn hóa | 2 |
+| Bỏ nhóm mang nhãn mâu thuẫn | 0 |
+| Bỏ trùng sau chuẩn hóa | 476 |
+| Còn lại | 5.096 (4.500 ham, 596 spam) |
+| Tập huấn luyện / tập test | 4.076 (477 spam) / 1.020 (119 spam) |
+| Trong tập huấn luyện: sub-train / validation | 3.057 / 1.019 |
+
+Ma trận TF-IDF của tập huấn luyện có kích thước $4076 \times 5445$, chỉ 0,16% phần tử khác 0; 45 hàng rỗng vì mọi từ của tin là stop word hoặc xuất hiện ở ít hơn hai tài liệu.
+
+## Kết quả kiểm chứng lý thuyết
+
+| Kiểm tra | Kết quả |
+|---|---|
+| `svd_via_eig` so với `numpy.linalg.svd` | sai số tương đối của $\sigma_i$ cỡ $10^{-15}$, các nhân tử trực chuẩn |
+| Nghiệm chính xác so với ARPACK của scikit-learn ($k = 50$) | sai số cỡ $10^{-15}$, $\vert\cos\vert = 1$ giữa các thành phần |
+| Randomized SVD, $p = k$, $q = 10$ ($k = 50$) | sai số tương đối lớn nhất của $\sigma_i$: $2{,}2 \cdot 10^{-4}$ (LSA), $2{,}6 \cdot 10^{-4}$ (PCA); với $p = 10$, $q = 4$ là $4{,}4 \cdot 10^{-2}$ |
+| Eckart–Young: sai số chiếu đo được so với $\sum_{i\gt k}\sigma_i^2$ | khớp đến cỡ $10^{-12}$ tại $k = 10, 50, 100, 300, 1000$; luôn nhỏ hơn không gian con ngẫu nhiên và việc giữ $k$ từ có chuẩn lớn nhất |
+| PCA = SVD($X_c$): ba cách tính phương sai | chênh lệch tuyệt đối cỡ $10^{-17}$ trên các giá trị cỡ $10^{-3}$; phần tử ngoài đường chéo của $\mathrm{Cov}(Z)$ cỡ $10^{-18}$ |
+| Tâm hóa | $\vert\cos(v_1, \mu)\vert$ là 0,883 với LSA và 0,327 với PCA |
+| Góc chính lớn nhất giữa không gian con LSA và PCA | 72,4° tại $k = 50$, 59,3° tại $k = 300$ |
+
+Phổ giá trị kỳ dị suy giảm chậm: 300 thành phần giữ 43,9% năng lượng, 1000 thành phần giữ 75,4%.
+
+## Kết quả phân loại
+
+Trên tập validation, F1 cao nhất của LSA là 0,9205, đạt tại cả $k = 300$ và $k = 1000$; F1 cao nhất của PCA cũng là 0,9205, tại $k = 300$; baseline đạt 0,9283. Theo quy tắc chọn, mô hình giảm chiều được chọn là LSA với $k = 300$. Kết quả trên tập test (1.020 tin, 119 spam):
+
+| Mô hình | Số đặc trưng | Accuracy | Precision | Recall | F1 (spam) | ROC-AUC |
+|---|---|---|---|---|---|---|
+| Baseline (TF-IDF đầy đủ) | 5445 | 0,9814 | 0,9237 | 0,9160 | 0,9198 | 0,9917 |
+| LSA ($k = 300$) | 300 | 0,9784 | 0,8943 | 0,9244 | 0,9091 | 0,9864 |
+| PCA ($k = 300$) | 300 | 0,9784 | 0,8943 | 0,9244 | 0,9091 | 0,9862 |
 
 Nhận xét:
 
-- Mô hình giảm chiều thấp hơn baseline một chút: F1 0,909 so với 0,920. LSA có 22 lỗi, 16 trong đó trùng với lỗi của baseline (baseline có 19 lỗi). Chênh lệch này chưa được kiểm định thống kê.
-- Định lý Eckart–Young chỉ nói về sai số tái tạo nên không giải thích trực tiếp chênh lệch trên. Một giả thuyết phù hợp với dữ liệu là các từ hiếm nhưng có tính phân biệt nằm ở đuôi phổ. Phổ suy giảm chậm: 300 thành phần chỉ giữ 43,9% năng lượng.
-- LSA và PCA cho cùng metric tại $k = 300$, nhưng góc chính lớn nhất giữa hai không gian con là 59,3°. Sự giống nhau về phân loại là quan sát thực nghiệm, không suy ra được từ việc hai ma trận Gram khác nhau một số hạng hạng một.
-- Phần lý thuyết được tái hiện bằng số. `svd_via_eig` và nghiệm Gram khớp tham chiếu đến $10^{-15}$. Randomized SVD ($p = k$, $q = 10$) lệch dưới $3 \cdot 10^{-4}$. Sai số chiếu khớp $\sum_{i\gt k}\sigma_i^2$ đến $10^{-12}$. Ba cách tính phương sai PCA khớp đến $10^{-17}$.
-- So với phiên bản trước của đồ án (cả ba mô hình F1 0,9389 với $k = 1000$), kết quả thay đổi do đồng thời việc loại rò rỉ dữ liệu và việc đổi từ randomized SVD sang nghiệm chính xác. Không thể quy chênh lệch cho riêng một nguyên nhân.
+- Mô hình giảm chiều thấp hơn baseline một chút (F1 0,909 so với 0,920). LSA có 22 lỗi, 16 trong đó trùng với lỗi của baseline (19 lỗi). Chênh lệch chưa được kiểm định thống kê.
+- Định lý Eckart–Young nói về sai số tái tạo, không nói về khả năng phân loại, nên không giải thích trực tiếp chênh lệch này. Một giả thuyết, chưa được kiểm định trong notebook, là thông tin phân biệt của các từ hiếm nằm chủ yếu ở các hướng kỳ dị có $\sigma_i$ nhỏ, vốn bị cắt khi chỉ giữ 300 thành phần.
+- Tại $k = 300$, LSA và PCA có cùng accuracy, precision, recall và F1 trên tập test (ROC-AUC 0,9864 so với 0,9862), dù hai không gian con khác nhau rõ (góc chính lớn nhất 59,3°). Đây là quan sát thực nghiệm: việc $X^\mathsf{T}X$ và $X_c^\mathsf{T}X_c$ khác nhau một ma trận hạng một $n\mu\mu^\mathsf{T}$ (công thức (19)) chỉ suy ra tính đan xen của trị riêng, không suy ra hai không gian con gần nhau.
+- Trên bộ dữ liệu này, giảm chiều không cải thiện độ chính xác. Điều thu được là số đặc trưng giảm từ 5445 xuống 300, thành phần chính thứ nhất diễn giải được và tương quan 0,68 với nhãn spam dù PCA không dùng nhãn (PC2, PC3 chủ yếu ứng với các từ *ok*, *come* và gần như không tương quan với nhãn), cùng khả năng trực quan hóa trong 2 chiều.
 
-## Hạn chế
+## Hạn chế và hướng phát triển
 
 - Mô hình tuyến tính trên bag-of-words, không nắm thứ tự từ hay ngữ nghĩa ngoài đồng xuất hiện.
-- Từ điển, idf, $\mu$ và $V_k$ gắn với tập huấn luyện; khi từ vựng thay đổi phải tính lại TF-IDF và phân rã.
+- Từ điển, trọng số idf, vectơ trung bình và các thành phần chính gắn với tập huấn luyện; khi từ vựng thay đổi phải tính lại toàn bộ.
 - Bộ dữ liệu nhỏ, một ngôn ngữ, tập test chỉ có 119 tin spam.
-- Nghiệm chính xác qua Gram $n \times n$ chỉ khả thi khi $n$ vừa phải; với $n$ lớn hơn nhiều phải dùng randomized SVD.
+- Nghiệm chính xác qua ma trận Gram chỉ khả thi khi số tài liệu vừa phải; với dữ liệu lớn hơn nhiều cần dùng randomized SVD hoặc SVD gia tăng.
+- Hướng phát triển: embedding học sẵn thay cho TF-IDF, mô hình phi tuyến trên không gian PCA, so sánh với NMF.
 
 ## Tài liệu tham khảo
 

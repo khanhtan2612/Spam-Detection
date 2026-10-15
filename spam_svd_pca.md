@@ -1112,7 +1112,7 @@ for k in [50, 300]:
 
 Thành phần đầu của LSA gần song song với trung bình ($|\cos| = 0{,}883$) và mọi tài liệu có cùng dấu trên nó. Sau tâm hóa, PC1 cực đại phương sai quanh trung bình; hàm mục tiêu không còn số hạng $(w^\mathsf{T}\mu)^2$ của tọa độ trung bình. Điều này không bảo đảm PC1 trực giao hay có cosin nhỏ với $\mu$: số đo là $|\cos| = 0{,}327$, và 74% tài liệu vẫn cùng dấu trên PC1.
 
-Hai ma trận Gram khác nhau một số hạng hạng một, nhưng điều đó chỉ suy ra tính đan xen của trị riêng, không suy ra hai không gian con gần nhau. Góc chính lớn nhất giữa $\mathrm{span}(V_k)$ của LSA và PCA là 72,4° tại $k = 50$ và 59,3° tại $k = 300$: hai không gian con khác nhau rõ rệt. Việc hai mô hình cho cùng F1 tại $k = 300$ là quan sát thực nghiệm, không phải hệ quả của lý thuyết.
+$X^\mathsf{T}X$ và $X_c^\mathsf{T}X_c$ khác nhau một ma trận hạng một $n\mu\mu^\mathsf{T}$ (công thức (19)), nhưng điều đó chỉ suy ra tính đan xen của trị riêng, không suy ra hai không gian con gần nhau. Góc chính lớn nhất giữa $\mathrm{span}(V_k)$ của LSA và PCA là 72,4° tại $k = 50$ và 59,3° tại $k = 300$: hai không gian con khác nhau rõ rệt. Việc hai mô hình cho cùng F1 tại $k = 300$ là quan sát thực nghiệm, không phải hệ quả của lý thuyết.
 
 ### **Đánh giá cuối cùng trên tập test**
 
