@@ -9,7 +9,7 @@ Bài toán: cho một tin nhắn SMS, dự đoán nó là `ham` (tin thường) 
 Mục tiêu cụ thể:
 
 1. Cài đặt SVD qua trị riêng của $A^\mathsf{T}A$, randomized SVD (Halko–Martinsson–Tropp) và PCA với tâm hóa ngầm trên ma trận thưa; đối chiếu với `scikit-learn`.
-2. So sánh logistic regression trên TF-IDF đầy đủ, trên đặc trưng LSA (truncated SVD) và trên đặc trưng PCA với $k \in \{2, \dots, 1000\}$.
+2. So sánh logistic regression trên TF-IDF đầy đủ, trên đặc trưng LSA (truncated SVD) và trên đặc trưng PCA với $k \in\lbrace 2, \dots, 1000\rbrace$.
 3. Kiểm chứng thực nghiệm định lý Eckart–Young, quan hệ PCA–SVD, tính không tương quan của các thành phần chính và vai trò của tâm hóa.
 
 ## 2. Cấu trúc thư mục
@@ -104,7 +104,7 @@ Các tiêu đề dưới đây trùng với tiêu đề cell trong notebook. Ký
 
 ### 5.4. Cài đặt SVD và PCA từ đầu
 
-- `svd_via_eig(A)`: thuật toán rút ra từ chứng minh Định lý 1 (PHẦN 1, công thức (3)–(5)): `eigh(AᵀA)` → $\sigma_i = \sqrt{\lambda_i}$, $u_i = Av_i/\sigma_i$. Khi $n > m$ thì áp dụng cho $A^\mathsf{T}$. Ngưỡng hạng đặt trên $\lambda_i > \lambda_1 \cdot \max(m,n)\,\varepsilon$ (nhận xét số học trong PHẦN 1.3). Đối chiếu với `np.linalg.svd` trên hai ma trận Gauss, một ma trận hạng 5 và một khối 300 hàng TF-IDF: sai số $\sigma$ cỡ $10^{-15}$–$10^{-16}$, sai số tái tạo cỡ $10^{-15}$, $\lVert U^\mathsf{T}U - I\rVert$ và $\lVert V^\mathsf{T}V - I\rVert$ cỡ $10^{-14}$; hạng của khối TF-IDF được xác định đúng là 296.
+- `svd_via_eig(A)`: thuật toán rút ra từ chứng minh Định lý 1 (PHẦN 1, công thức (3)–(5)): `eigh(AᵀA)` → $\sigma_i = \sqrt{\lambda_i}$, $u_i = Av_i/\sigma_i$. Khi $n \gt m$ thì áp dụng cho $A^\mathsf{T}$. Ngưỡng hạng đặt trên $\lambda_i \gt\lambda_1 \cdot\max(m,n)\thinspace\varepsilon$ (nhận xét số học trong PHẦN 1.3). Đối chiếu với `np.linalg.svd` trên hai ma trận Gauss, một ma trận hạng 5 và một khối 300 hàng TF-IDF: sai số $\sigma$ cỡ $10^{-16}$ đến $10^{-15}$, sai số tái tạo cỡ $10^{-15}$, $\lVert U^\mathsf{T}U - I\rVert$ và $\lVert V^\mathsf{T}V - I\rVert$ cỡ $10^{-14}$; hạng của khối TF-IDF được xác định đúng là 296.
 - `SparseOperator`, `CenteredOperator`: hai lớp cung cấp `matmat` ($AM$), `rmatmat` ($A^\mathsf{T}M$), `gram` ($AA^\mathsf{T}$), `gram_t` ($A^\mathsf{T}A$). `CenteredOperator` cài công thức tâm hóa ngầm (28) và ma trận Gram tâm hóa (29); ma trận $X_c$ đặc không bao giờ được tạo.
 - `randomized_svd(A, k, n_oversamples=k, n_iter=10)`: thuật toán HMT (PHẦN 4.5): $\Omega$ Gauss → $Y = A\Omega$ → QR → power iteration có QR → $B = Q^\mathsf{T}A$ → SVD của $B$. Bảng hội tụ tại $k = 50$ so với ARPACK:
 
@@ -128,7 +128,7 @@ Các tiêu đề dưới đây trùng với tiêu đề cell trong notebook. Ký
 
 ### 5.5. Phổ giá trị kỳ dị
 
-Vì $n < d$, toàn bộ phổ lấy từ `eigh(X Xᵀ)` ($4136 \times 4136$, khoảng 5 giây), giữ lại $U$; $V_k = X^\mathsf{T}U_k\Sigma_k^{-1}$ cho 1000 thành phần đầu (PHẦN 4.3, công thức (27)). Kiểm tra (8): $\sum\sigma_i^2 = 4090{,}000000 = \lVert X\rVert_F^2$ = số hàng khác rỗng (46 tin mất hết từ sau tiền xử lý). Hạng số học 3694. $\sigma_1 = 6{,}659$, $\sigma_2 = 5{,}230$. Năng lượng tích lũy: 50% cần $k = 390$, 70% → 829, 80% → 1174, 90% → 1702, 95% → 2131. Phổ không có khuỷu, đặc trưng của văn bản thưa.
+Vì $n \lt d$, toàn bộ phổ lấy từ `eigh(X Xᵀ)` ($4136 \times 4136$, khoảng 5 giây), giữ lại $U$; $V_k = X^\mathsf{T}U_k\Sigma_k^{-1}$ cho 1000 thành phần đầu (PHẦN 4.3, công thức (27)). Kiểm tra (8): $\sum\sigma_i^2 = 4090{,}000000 = \lVert X\rVert_F^2$ = số hàng khác rỗng (46 tin mất hết từ sau tiền xử lý). Hạng số học 3694. $\sigma_1 = 6{,}659$, $\sigma_2 = 5{,}230$. Năng lượng tích lũy: 50% cần $k = 390$, 70% → 829, 80% → 1174, 90% → 1702, 95% → 2131. Phổ không có khuỷu, đặc trưng của văn bản thưa.
 
 ### 5.6. Trực quan hóa 2D và diễn giải các thành phần
 
@@ -147,20 +147,20 @@ Quét $k$ trên validation (vectorizer fit trên sub-train, baseline F1 = 0,9732
 | fit LSA (s) | 0,0 | 0,0 | 0,1 | 0,2 | 0,7 | 2,3 | 13,1 | 15,7 | 26,1 | 53,5 |
 | fit PCA (s) | 0,0 | 0,0 | 0,1 | 0,2 | 0,8 | 2,5 | 13,6 | 21,0 | 31,8 | 58,9 |
 
-$k$ tốt nhất: 1000 cho cả hai. Hai đường F1 gần trùng nhau từ $k \ge 50$ (hai ma trận Gram chỉ khác một số hạng hạng một, công thức (20)). Thời gian fit tăng gần bậc hai theo $k$ vì randomized SVD làm việc với $\ell = 2k$ cột (PHẦN 4.5).
+$k$ tốt nhất: 1000 cho cả hai. Hai đường F1 gần trùng nhau từ $k \ge 50$ (hai ma trận Gram chỉ khác một số hạng hạng một, công thức (20)). Thời gian fit tăng gần bậc hai theo $k$ vì randomized SVD làm việc với $\ell= 2k$ cột (PHẦN 4.5).
 
 ### 5.8. Kiểm chứng lý thuyết bằng thực nghiệm
 
 **Eckart–Young** (PHẦN 3). Sai số $\lVert X - XV V^\mathsf{T}\rVert_F^2$ đo trực tiếp theo khối 512 hàng:
 
-| $k$ | SVD (đo) | $\sum_{i>k}\sigma_i^2$ | ngẫu nhiên | top-$k$ cột theo chuẩn | $\lvert$SVD − lý thuyết$\rvert$ |
+| $k$ | SVD (đo) | $\sum_{i\gt k}\sigma_i^2$ | ngẫu nhiên | $k$ cột có chuẩn lớn nhất | chênh lệch SVD và lý thuyết |
 |---|---|---|---|---|---|
-| 10 | 3883,13 | 3883,13 | 4082,91 | 3924,10 | $< 10^{-9}$ |
-| 50 | 3463,01 | 3463,01 | 4053,81 | 3559,64 | $< 10^{-9}$ |
-| 100 | 3117,62 | 3117,62 | 4017,42 | 3264,36 | $< 10^{-9}$ |
-| 200 | 2638,60 | 2638,60 | 3945,52 | 2870,86 | $< 10^{-9}$ |
-| 500 | 1789,94 | 1789,94 | 3728,16 | 2197,87 | $< 10^{-9}$ |
-| 1000 | 1005,97 | 1005,97 | 3366,37 | 1575,93 | $< 10^{-9}$ |
+| 10 | 3883,13 | 3883,13 | 4082,91 | 3924,10 | $\lt 10^{-9}$ |
+| 50 | 3463,01 | 3463,01 | 4053,81 | 3559,64 | $\lt 10^{-9}$ |
+| 100 | 3117,62 | 3117,62 | 4017,42 | 3264,36 | $\lt 10^{-9}$ |
+| 200 | 2638,60 | 2638,60 | 3945,52 | 2870,86 | $\lt 10^{-9}$ |
+| 500 | 1789,94 | 1789,94 | 3728,16 | 2197,87 | $\lt 10^{-9}$ |
+| 1000 | 1005,97 | 1005,97 | 3366,37 | 1575,93 | $\lt 10^{-9}$ |
 
 Không gian con SVD trùng lý thuyết và luôn tốt hơn hai cách còn lại, đúng như Định lý 5.
 
@@ -187,8 +187,8 @@ Ma trận nhầm lẫn của cả ba mô hình: 896 ham đúng, 8 ham bị gán 
 Nhận xét:
 
 - Giảm chiều **không cải thiện** độ chính xác trên bộ dữ liệu này; ở $k = 1000$ nó bắt kịp baseline với cùng 16 lỗi, ở $k$ nhỏ hơn thì thua (F1 validation 0,93 tại $k = 100$ so với 0,97). Điều này nhất quán với Eckart–Young: phép chiếu tối ưu theo năng lượng, trong khi các từ hiếm nhưng mang tính phân biệt nằm ở đuôi phổ.
-- Chi phí của SVD ($\sim$1–2 phút cho $k = 1000$) lớn hơn nhiều so với huấn luyện baseline (0,02 s). Lợi ích của bước giảm chiều nằm ở biểu diễn đặc 1000 chiều, khả năng diễn giải các trục và trực quan hóa, không nằm ở độ chính xác.
-- Toàn bộ phần lý thuyết được tái hiện bằng số với sai số ở mức làm tròn: SVD tự cài đặt ($10^{-15}$), randomized SVD ($< 3 \cdot 10^{-4}$), Eckart–Young ($< 10^{-9}$), PCA–SVD ($10^{-12}$), $\operatorname{Cov}(Z)$ chéo ($10^{-18}$).
+- Chi phí của SVD (khoảng 1–2 phút cho $k = 1000$) lớn hơn nhiều so với huấn luyện baseline (0,02 s). Lợi ích của bước giảm chiều nằm ở biểu diễn đặc 1000 chiều, khả năng diễn giải các trục và trực quan hóa, không nằm ở độ chính xác.
+- Toàn bộ phần lý thuyết được tái hiện bằng số với sai số ở mức làm tròn: SVD tự cài đặt ($10^{-15}$), randomized SVD ($\lt 3 \cdot 10^{-4}$), Eckart–Young ($\lt 10^{-9}$), PCA–SVD ($10^{-12}$), $\operatorname{Cov}(Z)$ chéo ($10^{-18}$).
 
 ## 7. Hạn chế và hướng phát triển
 
