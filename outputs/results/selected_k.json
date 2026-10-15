@@ -1,0 +1,12 @@
+{
+  "criterion": "Maximum validation macro-F1; ties choose smaller k",
+  "selected_k": {
+    "pca": 100,
+    "svd": 100
+  },
+  "candidate_k": [
+    10,
+    50,
+    100
+  ]
+}

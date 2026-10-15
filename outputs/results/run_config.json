@@ -1,0 +1,46 @@
+{
+  "seed": 42,
+  "split_proportions": [
+    0.7,
+    0.15,
+    0.15
+  ],
+  "max_features": 1000,
+  "min_df": 2,
+  "sublinear_tf": true,
+  "norm": "l2",
+  "ngram_range": [
+    1,
+    1
+  ],
+  "classifier": {
+    "name": "LogisticRegression",
+    "C": 1.0,
+    "solver": "lbfgs",
+    "max_iter": 2000
+  },
+  "reducers": {
+    "pca": "randomized, whiten=False",
+    "svd": "randomized"
+  },
+  "valid_k": [
+    10,
+    50,
+    100
+  ],
+  "threshold": 0.5,
+  "blas_threads": 1,
+  "python": "3.14.7",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "versions": {
+    "numpy": "2.5.4",
+    "pandas": "3.0.6",
+    "scipy": "1.18.1",
+    "scikit-learn": "1.9.1",
+    "matplotlib": "3.11.2",
+    "joblib": "1.6.0",
+    "threadpoolctl": "3.7.0"
+  },
+  "timing_note": "fit includes TF-IDF + densify/reducer (if any) + classifier; inference median of 5 warm batches",
+  "information_metrics_fit_on": "training partition of each run"
+}

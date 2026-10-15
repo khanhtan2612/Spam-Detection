@@ -1,0 +1,38 @@
+[
+  {
+    "method": "baseline",
+    "text": "Can we meet at the library tomorrow?",
+    "prediction": "ham",
+    "spam_probability": 0.015190374198129655
+  },
+  {
+    "method": "baseline",
+    "text": "Congratulations! You have won a free prize. Call now to claim your cash reward!",
+    "prediction": "spam",
+    "spam_probability": 0.9682548191694431
+  },
+  {
+    "method": "pca",
+    "text": "Can we meet at the library tomorrow?",
+    "prediction": "ham",
+    "spam_probability": 0.01575919082876504
+  },
+  {
+    "method": "pca",
+    "text": "Congratulations! You have won a free prize. Call now to claim your cash reward!",
+    "prediction": "spam",
+    "spam_probability": 0.9848731156978252
+  },
+  {
+    "method": "svd",
+    "text": "Can we meet at the library tomorrow?",
+    "prediction": "ham",
+    "spam_probability": 0.015314781348298882
+  },
+  {
+    "method": "svd",
+    "text": "Congratulations! You have won a free prize. Call now to claim your cash reward!",
+    "prediction": "spam",
+    "spam_probability": 0.9860611766640226
+  }
+]

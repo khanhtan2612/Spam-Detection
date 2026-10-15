@@ -1,0 +1,36 @@
+{
+  "raw_rows": 5574,
+  "empty_removed": 0,
+  "conflicting_groups": 0,
+  "conflicting_rows_removed": 0,
+  "duplicates_removed": 415,
+  "clean_rows": 5159,
+  "class_counts": {
+    "ham": 4517,
+    "spam": 642
+  },
+  "splits": {
+    "train": {
+      "rows": 3611,
+      "class_counts": {
+        "ham": 3162,
+        "spam": 449
+      }
+    },
+    "validation": {
+      "rows": 774,
+      "class_counts": {
+        "ham": 677,
+        "spam": 97
+      }
+    },
+    "test": {
+      "rows": 774,
+      "class_counts": {
+        "ham": 678,
+        "spam": 96
+      }
+    }
+  },
+  "raw_file_sha256": "7d039a24a6083ed9ef0f806ebad56bbb976e3aeb8de05669173bfdc4996c239d"
+}

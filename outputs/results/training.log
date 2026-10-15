@@ -1,0 +1,11 @@
+Dữ liệu: {"raw_rows": 5574, "empty_removed": 0, "conflicting_groups": 0, "conflicting_rows_removed": 0, "duplicates_removed": 415, "clean_rows": 5159, "class_counts": {"ham": 4517, "spam": 642}, "splits": {"train": {"rows": 3611, "class_counts": {"ham": 3162, "spam": 449}}, "validation": {"rows": 774, "class_counts": {"ham": 677, "spam": 97}}, "test": {"rows": 774, "class_counts": {"ham": 678, "spam": 96}}}, "raw_file_sha256": "7d039a24a6083ed9ef0f806ebad56bbb976e3aeb8de05669173bfdc4996c239d"}
+Validation pca k=10: macro-F1=0.843138; fit=0.3262s
+Validation pca k=50: macro-F1=0.893168; fit=0.5739s
+Validation pca k=100: macro-F1=0.899132; fit=0.6333s
+Validation svd k=10: macro-F1=0.843138; fit=0.1037s
+Validation svd k=50: macro-F1=0.897044; fit=0.2047s
+Validation svd k=100: macro-F1=0.901890; fit=0.2781s
+Đã khóa k theo validation: {'pca': 100, 'svd': 100}
+TEST baseline: accuracy=0.972868 macro-F1=0.930971 spam-recall=0.781250
+TEST pca: accuracy=0.954780 macro-F1=0.875954 spam-recall=0.635417
+TEST svd: accuracy=0.953488 macro-F1=0.871684 spam-recall=0.625000
