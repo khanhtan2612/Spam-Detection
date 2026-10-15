@@ -97,6 +97,8 @@ Python đang chạy: D:\Python\python.exe
 ## 3. Dataset, làm sạch và chia tập
 
 Dùng [UCI SMS Spam Collection](https://archive.ics.uci.edu/dataset/228/sms+spam+collection).
+Bản GitHub không kèm dataset hoặc model đã huấn luyện. Notebook tự tải dữ liệu từ UCI khi chưa có và tạo model trên máy người chạy. Phần kết quả lưu sẵn chỉ giữ số liệu tổng hợp và ví dụ demo tự tạo.
+
 Mỗi dòng gồm `nhãn<TAB>tin nhắn`. Dataset gốc đọc được 5.574 dòng.
 Chữ thường và khoảng trắng được chuẩn hóa; giữ một bản cho mỗi nội dung. Nếu cùng nội dung có nhãn mâu thuẫn thì loại cả nhóm.
 
@@ -126,8 +128,6 @@ summary = pd.DataFrame([
     for name, part in splits.items()
 ])
 show_table(summary)
-show_table(splits["train"][["label", "text"]].head(3).assign(
-    text=lambda frame: frame.text.str.slice(0, 100)))
 ```
 
 ```text
@@ -143,12 +143,6 @@ Dòng gốc: 5574; bản trùng loại: 415; còn: 5159
 | train | 3611 | 3162 | 449 |
 | validation | 774 | 677 | 97 |
 | test | 774 | 678 | 96 |
-
-| label | text |
-| --- | --- |
-| ham | what time you thinkin of goin? |
-| spam | wanna have a laugh? try chit-chat on your mobile now! logon by txting the word: chat and send it to  |
-| ham | what is this 'hex' place you talk of? explain! |
 
 ```python
 counts = pd.Series(audit["class_counts"]).reindex(["ham", "spam"])
@@ -529,7 +523,7 @@ show_table(test_metrics[["method", "D", "output_dimensions", "dimension_reductio
                          "tfidf_csr_bytes", "representation_bytes", "pca_dense_input_bytes"]])
 ```
 
-![Kết quả cell 25, output 1](<outputs/figures/fit_time.png>)
+![Kết quả cell 25, output 1](<outputs/figures/notebook/cell_25_output_1.png>)
 
 | method | fit_seconds | inference_batch_seconds |
 | --- | --- | --- |

@@ -11,7 +11,7 @@
 | **Tài liệu dành cho người đọc** | **[README.md](README.md)** | Tổng quan, cấu trúc, cách chạy và cách đọc kết quả. |
 | **Output thực tế của mô hình** | **[KET_QUA_MO_HINH.md](KET_QUA_MO_HINH.md)** | Bản xuất notebook có code, bảng số liệu, hình và output đã chạy. |
 
-Nếu chỉ cần xem bài làm, đọc file này rồi mở **KET_QUA_MO_HINH.md**. Nếu cần hiểu cách triển khai, đọc **GIAI_THICH_CODE.md** song song với notebook. Dữ liệu chi tiết làm minh chứng nằm trong [outputs/results/](outputs/results/).
+Nếu chỉ cần xem bài làm, đọc file này rồi mở **KET_QUA_MO_HINH.md**. Nếu cần hiểu cách triển khai, đọc **GIAI_THICH_CODE.md** song song với notebook. Các bảng kết quả làm minh chứng nằm trong [outputs/results/](outputs/results/).
 
 ## 2. Bài toán và hướng thực hiện
 
@@ -26,7 +26,7 @@ SMS → TF-IDF (tối đa 1.000 đặc trưng)
 
 TF-IDF đổi văn bản thành số. PCA/SVD giữ lại `k` tọa độ để khảo sát ảnh hưởng của giảm chiều. Logistic Regression là classifier dùng chung, giúp so sánh ba biểu diễn.
 
-Dữ liệu lấy từ [UCI SMS Spam Collection](https://archive.ics.uci.edu/dataset/228/sms%2Bspam%2Bcollection). Bản chạy kèm theo đọc **5.574 dòng**, loại **415 bản trùng**, còn **5.159 SMS**: 4.517 ham và 642 spam. Dữ liệu được chia khoảng **70%/15%/15%**, tương ứng **3.611 train / 774 validation / 774 test**. Xem [thống kê dữ liệu](outputs/results/data_summary.json).
+Dữ liệu lấy từ [UCI SMS Spam Collection](https://archive.ics.uci.edu/dataset/228/sms%2Bspam%2Bcollection), do Tiago Almeida và José María Gómez Hidalgo cung cấp theo giấy phép **CC BY 4.0**. Dataset không được đóng gói trong repository; khi chạy, người đọc tải từ nguồn UCI như mục 5. Bản kết quả kèm theo đọc **5.574 dòng**, loại **415 bản trùng**, còn **5.159 SMS**: 4.517 ham và 642 spam. Dữ liệu được chia khoảng **70%/15%/15%**, tương ứng **3.611 train / 774 validation / 774 test**. Xem [thống kê dữ liệu](outputs/results/data_summary.json).
 
 Chỉ train được dùng để học vocabulary, IDF và hướng chiếu. Thử `k = 10, 50, 100`, chọn bằng macro-F1 validation, rồi fit lại trên train + validation và đánh giá test. Test không dùng để chọn `k`.
 
@@ -42,14 +42,16 @@ Chỉ train được dùng để học vocabulary, IDF và hướng chiếu. Th�
 ├── src/                      # Source Python: dữ liệu, toán, train, predict, vẽ hình
 ├── scripts/                  # Chạy notebook và xuất Markdown
 ├── tests/                    # Kiểm tra toán, pipeline và xuất notebook
-├── data/raw/                 # Dataset UCI và thông tin nguồn
+├── data/raw/                 # Tạo khi tải UCI trên máy, không theo dõi trong Git
 └── outputs/
-    ├── models/               # Ba pipeline đã huấn luyện (.joblib)
-    ├── results/              # CSV, JSON và log kết quả thật
-    └── figures/              # Biểu đồ PNG
+    ├── models/               # Tạo khi train trên máy, không theo dõi trong Git
+    ├── results/              # Bảng số liệu, JSON và log minh chứng
+    └── figures/              # Biểu đồ PNG kèm tài liệu
 ```
 
-`src/` và notebook chứa **source code**. File `.joblib` là **mô hình đã học**, gồm cả TF-IDF, reducer nếu có và classifier. CSV/PNG là **kết quả thực nghiệm**, không phải source code.
+`src/` và notebook chứa **source code**. CSV/PNG được giữ làm **kết quả thực nghiệm** để người đọc xem tài liệu. Thư mục `data/raw/` và `outputs/models/` được tạo khi chạy trên máy và không nằm trong bản GitHub. Sau khi huấn luyện, mỗi file `.joblib` chứa TF-IDF, reducer nếu có và classifier đã học.
+
+Các file theo từng bản ghi `outputs/results/split_assignments.csv` và `outputs/results/test_predictions.csv` cũng chỉ được sinh trên máy, không đăng kèm GitHub. Repository giữ các bảng tổng hợp, cấu hình và biểu đồ để đọc kết quả.
 
 ## 4. Cài đặt trong VS Code
 
@@ -71,17 +73,28 @@ Cài thư viện bằng đúng Python của môi trường này:
 
 Trong VS Code, cài extension **Python** và **Jupyter** của Microsoft. Mở notebook → **Select Kernel** → chọn Python trong `.venv` → **Run All**. Output xuất hiện dưới mỗi ô code. Chạy từ đầu theo thứ tự để các biến được tạo đầy đủ.
 
+Ô dữ liệu của notebook tự tải dataset từ UCI vào `data/raw/` nếu chưa có file; lần đầu cần Internet. Chạy tiếp các ô huấn luyện sẽ tạo ba model trong `outputs/models/` để ô dự đoán sử dụng.
+
 Ô đầu notebook kiểm tra các thư viện và tự cài từ `requirements.txt` bằng đúng Python của kernel nếu còn thiếu, gồm cả `joblib`. Bước này cần Internet khi phải tải thư viện. Nếu cài đặt thất bại, ô sẽ báo lệnh cài kèm đường dẫn Python đang chạy; sau khi xử lý, chạy lại từ ô đầu. Khi đủ thư viện, bước kiểm tra không cài lại. Hướng dẫn thao tác được giữ trong README; notebook tập trung vào nội dung bài toán, code và kết quả.
 
 ## 5. Chạy bằng terminal
 
-**Dự đoán ngay với mô hình có sẵn:**
+**Tải dữ liệu và huấn luyện trước lần dự đoán đầu tiên:**
+
+```powershell
+.\.venv\Scripts\python.exe -m src.data --download
+.\.venv\Scripts\python.exe -m src.train
+```
+
+Lệnh đầu tải dữ liệu chính thức vào `data/raw/`, kèm README nguồn và thông tin gói tải; nếu đã có dataset thì không tải lại. `src.train` đọc file đã tải và tạo `baseline.joblib`, `pca.joblib`, `svd.joblib` trong `outputs/models/`. Cần tải dữ liệu trước khi chạy `src.train` trực tiếp.
+
+**Dự đoán sau khi huấn luyện:**
 
 ```powershell
 .\.venv\Scripts\python.exe -m src.predict --model outputs/models/svd.joblib --text "Can we meet at the library tomorrow?"
 ```
 
-Thay nội dung sau `--text` để thử SMS khác. Đổi tên model thành `baseline.joblib` hoặc `pca.joblib` để thử hai pipeline còn lại. Lệnh dự đoán chỉ tải model, không huấn luyện lại.
+Thay nội dung sau `--text` để thử SMS khác. Đổi tên model thành `baseline.joblib` hoặc `pca.joblib` để thử hai pipeline còn lại. Những lần dự đoán tiếp theo chỉ nạp model đã tạo trên máy, không cần huấn luyện lại.
 
 **Chạy toàn bộ notebook và cập nhật file output:**
 
@@ -89,10 +102,12 @@ Thay nội dung sau `--text` để thử SMS khác. Đổi tên model thành `ba
 .\.venv\Scripts\python.exe -m scripts.run_notebook
 ```
 
+Lệnh này chạy notebook từ đầu, tự tải UCI nếu thiếu rồi huấn luyện và tạo các model trên máy.
+
 **Các lệnh riêng khi cần:**
 
 ```powershell
-# Huấn luyện và tạo kết quả trong outputs/.
+# Huấn luyện lại từ dữ liệu đã tải và tạo kết quả trong outputs/.
 .\.venv\Scripts\python.exe -m src.train
 
 # Kiểm chứng toán trên ma trận nhỏ.
@@ -125,8 +140,8 @@ PCA variance và SVD energy có định nghĩa khác nhau. Accuracy cũng chưa 
 
 ## 7. Mang project sang máy khác hoặc đưa lên GitHub
 
-Trên GitHub, chọn **Code → Download ZIP**, giải nén và mở thư mục chứa README trong VS Code. Nếu đã cài Git, có thể chọn **Code**, sao chép URL HTTPS rồi dùng `git clone <URL>` để tải repository. Sau đó tạo môi trường và cài thư viện như mục 4. Model đã lưu nên nạp bằng các phiên bản thư viện đã ghi.
+Trên GitHub, chọn **Code → Download ZIP**, giải nén và mở thư mục chứa README trong VS Code. Nếu đã cài Git, có thể chọn **Code**, sao chép URL HTTPS rồi dùng `git clone <URL>` để tải repository. Sau đó tạo môi trường và cài thư viện như mục 4, rồi chạy notebook hoặc tải dữ liệu và huấn luyện như mục 5.
 
-Repository gồm source trong `src/`, các script trong `scripts/`, notebook có output, tài liệu hướng dẫn, bộ kiểm tra, dữ liệu UCI và các artifact minh chứng. File `data/raw/UCI_README.txt` giữ thông tin nguồn và điều kiện sử dụng dataset.
+Repository gồm source trong `src/`, các script trong `scripts/`, notebook có output, tài liệu hướng dẫn, bộ kiểm tra, hình và bảng kết quả minh chứng. Dataset UCI và model `.joblib` không được đăng kèm. Nguồn và giấy phép dataset được dẫn ở mục 2; khi tải dữ liệu, script lưu thêm `data/raw/UCI_README.txt` trên máy.
 
-Môi trường `.venv`, cache và thư mục `dist/` được bỏ qua theo `.gitignore`; người đọc tạo lại môi trường trên máy mình. Gói `dist/SVD_PCA_Spam.zip` là bản chia sẻ cục bộ, không nằm trong repository GitHub.
+Môi trường `.venv`, cache, `data/raw/`, `outputs/models/`, hai CSV theo từng bản ghi nêu ở mục 3 và thư mục `dist/` được bỏ qua theo `.gitignore`; người đọc tạo lại môi trường, tải dữ liệu và huấn luyện trên máy mình. Gói `dist/SVD_PCA_Spam.zip` là bản chia sẻ cục bộ, không nằm trong repository GitHub.

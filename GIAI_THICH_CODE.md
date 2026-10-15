@@ -9,6 +9,8 @@ Tài liệu này giúp bạn biết **phần nào làm việc gì**, input/outpu
 
 Notebook gọi các hàm dùng chung để cách tính giữa notebook và terminal nhất quán. Khi sửa thuật toán, sửa hàm trong `src/` rồi chạy lại notebook để cập nhật kết quả. Các script trong [scripts/](scripts/) chỉ điều phối notebook hoặc xuất Markdown.
 
+Bản GitHub giữ source, tài liệu, hình và bảng kết quả minh chứng. Dataset trong `data/raw/` và model `.joblib` trong `outputs/models/` được tạo khi chạy trên máy, không được theo dõi trong Git. Để chạy lại, dùng notebook hoặc tải dữ liệu rồi huấn luyện theo [README.md](README.md).
+
 Luồng chính:
 
 ```text
@@ -27,7 +29,7 @@ Số dưới đây là **thứ tự ô code**, không tính các ô Markdown và
 | Ô | Công việc | Input → Output | Hàm hoặc module chính |
 |---:|---|---|---|
 | 1 | Xác định thư mục project, kiểm tra/cài thư viện, giới hạn CPU, tạo nơi lưu kết quả và hàm hiển thị bảng | Thư mục project → các biến dùng chung và logger | `ensure_dependencies`, `prepare_output_and_logger`, `show_table` |
-| 2 | Đọc, làm sạch, chia SMS và xem mẫu | File UCI → `splits`, thống kê và bảng nhãn | `download_data`, `prepare_data_and_audit` |
+| 2 | Tải UCI nếu thiếu, đọc, làm sạch, chia SMS và xem thống kê | Nguồn UCI/file cục bộ → `splits`, thống kê và bảng nhãn | `download_data`, `prepare_data_and_audit` |
 | 3 | Vẽ phân bố ham/spam | Thống kê đã làm sạch → biểu đồ phân bố lớp | Matplotlib |
 | 4 | Khảo sát TF-IDF, sparsity và dung lượng | SMS train → `X_train`, số chiều `D`, trọng số từ mẫu | `make_pipeline`, `TfidfVectorizer` |
 | 5 | Minh họa SVD và giữ `k=2` | Ma trận 6×4 → `U`, singular values, `Vt`, `Z` và sai số | `run_demo`, `np.linalg.svd` |
@@ -54,6 +56,8 @@ Số dưới đây là **thứ tự ô code**, không tính các ô Markdown và
 | `load_data(path)` | File nhãn và nội dung ngăn bằng tab | DataFrame sạch và thống kê |
 | `clean_data(raw)` | DataFrame `source_id`, `label`, `text` | Loại rỗng/trùng/mâu thuẫn; thêm hash nội dung |
 | `split_data(frame, seed)` | Dữ liệu sạch | Dict chứa `train`, `validation`, `test` |
+
+Nguồn chính thức là [UCI SMS Spam Collection](https://archive.ics.uci.edu/dataset/228/sms%2Bspam%2Bcollection) của Tiago Almeida và José María Gómez Hidalgo, giấy phép **CC BY 4.0**. Repository không chứa dataset. Ô 2 notebook tự gọi `download_data()` khi thiếu file; lệnh terminal `python -m src.data --download` tải dữ liệu vào `data/raw/`, giữ README nguồn và SHA-256 của gói tải. Sau khi đã có file, bước tải được bỏ qua.
 
 Mỗi hàng là một SMS. Mỗi nội dung chuẩn hóa giữ một bản. Nếu cùng nội dung có nhãn mâu thuẫn, loại cả nhóm. Làm sạch trước khi chia để tránh nội dung giống nhau xuất hiện ở nhiều tập.
 
@@ -94,10 +98,12 @@ Code so projector của hai không gian con để không nhầm các vector ch�
 
 `run(data_path, output_root)` điều phối sáu bước: tạo output → chuẩn bị dữ liệu → thử `k` → khóa lựa chọn → refit/test → lưu cấu hình và vẽ hình.
 
+Khi dùng terminal, chạy `python -m src.data --download` trước `python -m src.train` ở lần đầu; `src.train` đọc dataset cục bộ và không tự tải. Các pipeline được lưu vào `outputs/models/` sau khi huấn luyện để bước dự đoán sử dụng. Chạy toàn bộ notebook cũng thực hiện tải dữ liệu nếu thiếu và tạo các model này.
+
 | Hàm | Vai trò và đầu ra |
 |---|---|
 | `prepare_output_and_logger` | Tạo `outputs/results`, `outputs/figures`, `outputs/models`; trả logger và đường dẫn kết quả |
-| `prepare_data_and_audit` | Đọc/chia dữ liệu; lưu thống kê và ID từng split; trả `splits` |
+| `prepare_data_and_audit` | Đọc/chia dữ liệu; lưu thống kê và tạo file ID từng split trên máy; trả `splits` |
 | `fit_evaluate` | Nhận phương pháp, `k`, train và evaluation; trả pipeline đã fit, một dòng metrics và nhãn dự đoán |
 | `score_predictions` | Nhận nhãn thật/dự đoán; trả accuracy, macro-F1 và precision/recall/F1 lớp spam |
 | `run_validation_sweep` | Fit baseline và grid `k`; lưu `validation_metrics.csv` |
@@ -111,7 +117,7 @@ Train dùng để học; validation dùng để chọn `k`; test dùng để đ�
 
 ## 7. Dự đoán, biểu đồ và công cụ notebook
 
-[src/predict.py](src/predict.py) có `predict_message(model, text)`: nhận pipeline đã học và SMS, trả dict `text`, `prediction`, `spam_probability`. Hàm tìm đúng cột `spam` theo `model.classes_`. Lệnh terminal chỉ load `.joblib`, không fit lại.
+[src/predict.py](src/predict.py) có `predict_message(model, text)`: nhận pipeline đã học và SMS, trả dict `text`, `prediction`, `spam_probability`. Hàm tìm đúng cột `spam` theo `model.classes_`. Cần chạy huấn luyện hoặc notebook để tạo `.joblib` trên máy trước lần dự đoán đầu tiên; lệnh dự đoán chỉ nạp model đã tạo, không fit lại.
 
 [src/plots.py](src/plots.py) đọc CSV/JSON đã lưu để vẽ hình; không train model. [scripts/run_notebook.py](scripts/run_notebook.py) chạy 16 ô bằng Python hiện tại rồi xuất báo cáo. [scripts/ipynb_to_markdown.py](scripts/ipynb_to_markdown.py) chỉ chuyển notebook đã có output thành Markdown và ảnh.
 
@@ -122,7 +128,8 @@ Các file [tests/test_math.py](tests/test_math.py), [tests/test_pipeline.py](tes
 - **Số liệu chính:** [validation_metrics.csv](outputs/results/validation_metrics.csv), [test_metrics.csv](outputs/results/test_metrics.csv).
 - **Cấu hình và lựa chọn:** [run_config.json](outputs/results/run_config.json), [selected_k.json](outputs/results/selected_k.json).
 - **Minh chứng toán/demo:** [math_demo.json](outputs/results/math_demo.json), [demo_predictions.json](outputs/results/demo_predictions.json).
-- **Mô hình đã học:** [outputs/models/](outputs/models/); cần source và thư viện tương thích để nạp pipeline.
+- **Mô hình đã học trên máy:** `outputs/models/`, được tạo sau khi huấn luyện và không đăng kèm GitHub; cần source và thư viện tương thích để nạp pipeline.
+- **Kết quả theo từng bản ghi trên máy:** `outputs/results/split_assignments.csv` và `outputs/results/test_predictions.csv`; được tạo khi chạy và không đăng kèm GitHub. Các bảng tổng hợp, cấu hình và biểu đồ vẫn được giữ làm minh chứng trong tài liệu.
 
 Macro-F1 trung bình F1 hai lớp nên hữu ích khi ham/spam mất cân bằng. Spam recall cho biết bắt được bao nhiêu spam; spam precision cho biết các dự đoán spam đúng bao nhiêu. Xác suất demo là ước lượng, chưa được hiệu chỉnh riêng.
 
