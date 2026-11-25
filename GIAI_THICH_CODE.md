@@ -1,136 +1,147 @@
-# Giải thích source code: SMS spam với PCA và SVD
+# Giải thích code: phát hiện SMS spam bằng SVD và PCA
 
-Tài liệu này giúp bạn biết **phần nào làm việc gì**, input/output ra sao và nên đọc theo thứ tự nào. Hướng dẫn chạy nằm ở [README.md](README.md); số liệu và hình đã chạy nằm ở [KET_QUA_MO_HINH.md](KET_QUA_MO_HINH.md).
+Tài liệu này cho biết mỗi file làm gì, mỗi hàm ứng với công thức nào và nên đọc theo thứ tự nào. Chứng minh và giải thích toán của từng công thức nằm ở [script.md](script.md); code, output và hình đã chạy nằm ở [KET_QUA_MO_HINH.md](KET_QUA_MO_HINH.md).
 
-## 1. Hai cách đọc cùng một project
+Toàn bộ thuật toán được tự cài bằng **NumPy**. pandas chỉ dùng để đọc và ghi bảng, matplotlib chỉ dùng để vẽ. `np.linalg.svd` và `np.linalg.eigh` chỉ xuất hiện trong `tests/` để đối chiếu kết quả.
 
-- [svd_pca_spam.ipynb](svd_pca_spam.ipynb): source theo mạch học và thuyết trình, gồm phần giải thích, 16 ô code và output ngay bên dưới.
-- [src/](src/): các hàm Python được notebook gọi lại. Đọc ở đây để hiểu chi tiết xử lý, huấn luyện và dự đoán.
-
-Notebook gọi các hàm dùng chung để cách tính giữa notebook và terminal nhất quán. Khi sửa thuật toán, sửa hàm trong `src/` rồi chạy lại notebook để cập nhật kết quả. Các script trong [scripts/](scripts/) chỉ điều phối notebook hoặc xuất Markdown.
-
-Bản GitHub giữ source, tài liệu, hình và bảng kết quả minh chứng. Dataset trong `data/raw/` và model `.joblib` trong `outputs/models/` được tạo khi chạy trên máy, không được theo dõi trong Git. Để chạy lại, dùng notebook hoặc tải dữ liệu rồi huấn luyện theo [README.md](README.md).
-
-Luồng chính:
+## 1. Đọc theo thứ tự nào?
 
 ```text
-data.py → models.py → train.py → outputs/
-              ↑                    ↓
-       math_demo.py              predict.py
-                              plots.py đọc CSV/JSON
+data.py → tfidf.py → decomposition.py → logistic.py → metrics.py
+   (dữ liệu)  (văn bản→X)  (SVD, PCA)        (mô hình→loss→gradient→GD)  (score)
+                                  ↘             ↓
+                                    pipeline.py (ghép 3 bước, lưu/đọc model)
+                                          ↓
+                                    train.py (chọn k → refit → test) → plots.py, predict.py
 ```
 
-`math_demo.py` minh họa toán trên ma trận nhỏ, độc lập với huấn luyện SMS. Các ô notebook nối những phần này thành một bài trình bày liên tục.
+Notebook [svd_pca_spam.ipynb](svd_pca_spam.ipynb) đi đúng thứ tự này và gọi lại các hàm trong `src/`. Muốn sửa thuật toán thì sửa trong `src/`, rồi chạy lại notebook.
 
-## 2. Bản đồ 16 ô code trong notebook
+## 2. Bản đồ 17 ô code của notebook
 
-Số dưới đây là **thứ tự ô code**, không tính các ô Markdown và không phụ thuộc số execution count hiển thị trong Jupyter.
-
-| Ô | Công việc | Input → Output | Hàm hoặc module chính |
+| Ô | Mục | Việc làm | Hàm chính |
 |---:|---|---|---|
-| 1 | Xác định thư mục project, kiểm tra/cài thư viện, giới hạn CPU, tạo nơi lưu kết quả và hàm hiển thị bảng | Thư mục project → các biến dùng chung và logger | `ensure_dependencies`, `prepare_output_and_logger`, `show_table` |
-| 2 | Tải UCI nếu thiếu, đọc, làm sạch, chia SMS và xem thống kê | Nguồn UCI/file cục bộ → `splits`, thống kê và bảng nhãn | `download_data`, `prepare_data_and_audit` |
-| 3 | Vẽ phân bố ham/spam | Thống kê đã làm sạch → biểu đồ phân bố lớp | Matplotlib |
-| 4 | Khảo sát TF-IDF, sparsity và dung lượng | SMS train → `X_train`, số chiều `D`, trọng số từ mẫu | `make_pipeline`, `TfidfVectorizer` |
-| 5 | Minh họa SVD và giữ `k=2` | Ma trận 6×4 → `U`, singular values, `Vt`, `Z` và sai số | `run_demo`, `np.linalg.svd` |
-| 6 | Minh họa PCA và quan hệ với SVD centered | Ma trận nhỏ → mean, covariance, eigenvalues và kiểm chứng | `np.linalg.eigh`, `np.linalg.svd` |
-| 7 | In các bước của ba pipeline | Tên phương pháp → chuỗi transformer/classifier | `make_pipeline` |
-| 8 | Fit baseline, PCA/SVD với các `k` hợp lệ trên train | Train/validation → bảng validation metrics và CSV | `fit_evaluate`, fingerprint TF-IDF |
-| 9 | Chọn `k`, refit và đánh giá test | Metrics validation → `selected`, ba model, test metrics và hình | `choose_k`, `refit_and_evaluate_test`, `make_plots` |
-| 10 | Xem tác động của `k` đến phân loại | Validation CSV → đồ thị macro-F1 | Ảnh `validation_f1.png` |
-| 11 | Phân tích lỗi dự đoán trên test | Confusion matrix → số spam bị bỏ sót và ham báo nhầm | `confusion_matrices.json` |
-| 12 | Xem thông tin giữ lại | Metrics train của từng cấu hình → PCA variance và SVD energy | Ảnh `retention.png` |
-| 13 | So thời gian, số chiều và dung lượng | Metrics đã đo → bảng/biểu đồ chi phí | `fit_time.png`, `representation_size.png` |
-| 14 | Nạp model và dự đoán hai SMS minh họa | File `.joblib` + SMS mới → nhãn và P(spam) | `joblib.load`, `predict_message` |
-| 15 | Chạy kiểm thử tự động | Thư mục `tests/` → log, số test và trạng thái đạt/lỗi | `unittest` |
-| 16 | Tính nhận xét từ số liệu thật | Test metrics → mức giảm chiều, giảm F1 và tỷ lệ dung lượng | Pandas |
-
-Ô 1 tìm thư mục chứa `src/` và `requirements.txt` trước khi import, rồi dùng `scripts/notebook_setup.py` để cài thư viện còn thiếu vào đúng Python của kernel. Ô 4 chỉ khảo sát TF-IDF trên train; các pipeline ở ô 8 tự fit TF-IDF cùng cấu hình trên đúng tập train đó. Ô 9 khóa `k` trước khi đánh giá test. Ô 16 chỉ mô tả kết quả, không chọn lại tham số.
+| 1 | Chuẩn bị | Tìm thư mục project, import, hàm hiển thị bảng | `show_table`, `show_figure` |
+| 2 | 2. Dữ liệu | Tải (nếu thiếu), làm sạch, chia 70/15/15, vẽ số tin mỗi lớp | `download_data`, `prepare_data` |
+| 3 | 3. TF-IDF | Học vocabulary và idf trên train, xem một hàng của X | `TfidfVectorizer` |
+| 4 | 4. SVD | Orthogonal iteration với k = 100; kiểm tra phần dư `XᵀXv_j − λ_j v_j` và so loss với 100 hướng ngẫu nhiên; bảng loss/score | `TruncatedSVD` |
+| 5 | 5. PCA | Như SVD nhưng trừ mean trước; so hướng v_1 của SVD với μ; vẽ score theo k | `PCA`, `plot_retention` |
+| 6 | 6.1 Mô hình | Giá trị σ(z) | `sigmoid` |
+| 7 | 6.2 Loss | J tại w = 0, b = 0 bằng log 2 | `loss` |
+| 8 | 6.3 Gradient | Gradient check trên 50 tin | `gradient_check` |
+| 9 | 6.4 Tối ưu | Tính L bằng `top_eigenvectors` với k = 1 (power iteration), thử η = 0,5 / 2 / 50 | `top_eigenvectors`, `plot_learning_rates` |
+| 10 | 6.4 Tối ưu | Huấn luyện baseline bằng GD, kiểm tra J giảm đều | `fit` |
+| 11 | 6.5 Score | Ví dụ 6 tin tính tay | `confusion_matrix`, `classification_scores` |
+| 12 | 6.5 Score | Score của baseline trên validation | `score` |
+| 13 | 7. Chọn k | Thử k ∈ {10, 50, 100} trên validation, chọn k | `run_validation_sweep`, `choose_k` |
+| 14 | 8. Test | Refit trên train + validation, đánh giá test, vẽ loss theo epoch | `refit_and_test`, `plot_loss_curves` |
+| 15 | 8. Test | Confusion matrix trên test | `plot_confusion_matrices` |
+| 16 | 8. Test | Load model đã lưu, dự đoán 2 tin mới | `load_pipeline`, `predict_message` |
+| 17 | 9. Kết luận | Bảng so sánh với baseline | pandas |
 
 ## 3. Dữ liệu: `src/data.py`
 
-| Hàm | Nhận gì? | Trả hoặc tạo gì? |
-|---|---|---|
-| `normalize_text(text)` | Một chuỗi SMS | Chuỗi chữ thường, bỏ khoảng trắng thừa |
-| `download_data(destination)` | Đường dẫn dataset | File UCI, README nguồn và thông tin gói tải |
-| `load_data(path)` | File nhãn và nội dung ngăn bằng tab | DataFrame sạch và thống kê |
-| `clean_data(raw)` | DataFrame `source_id`, `label`, `text` | Loại rỗng/trùng/mâu thuẫn; thêm hash nội dung |
-| `split_data(frame, seed)` | Dữ liệu sạch | Dict chứa `train`, `validation`, `test` |
-
-Nguồn chính thức là [UCI SMS Spam Collection](https://archive.ics.uci.edu/dataset/228/sms%2Bspam%2Bcollection) của Tiago Almeida và José María Gómez Hidalgo, giấy phép **CC BY 4.0**. Repository không chứa dataset. Ô 2 notebook tự gọi `download_data()` khi thiếu file; lệnh terminal `python -m src.data --download` tải dữ liệu vào `data/raw/`, giữ README nguồn và SHA-256 của gói tải. Sau khi đã có file, bước tải được bỏ qua.
-
-Mỗi hàng là một SMS. Mỗi nội dung chuẩn hóa giữ một bản. Nếu cùng nội dung có nhãn mâu thuẫn, loại cả nhóm. Làm sạch trước khi chia để tránh nội dung giống nhau xuất hiện ở nhiều tập.
-
-Tỷ lệ gần **70/15/15** được thực hiện bằng hai lần `train_test_split`, có stratification để giữ tỷ lệ nhãn. Seed là 42. Các bước này không học vocabulary hoặc hướng chiếu.
-
-## 4. Pipeline: `src/models.py`
-
-Đây là nơi nên đọc đầu tiên khi muốn hiểu hoặc thay cấu hình. `MAX_FEATURES=1000`, `K_VALUES=(10, 50, 100)` và `DEFAULT_SEED=42` được đặt ở đầu file.
-
-`make_pipeline(method, k, seed)` trả về **pipeline chưa fit**:
-
-| `method` | Các bước | Biểu diễn trước classifier |
-|---|---|---|
-| `baseline` | TF-IDF → Logistic Regression | Sparse, tối đa 1.000 chiều |
-| `pca` | TF-IDF → `ToDense` → PCA → Logistic Regression | Dense, `k` chiều |
-| `svd` | TF-IDF → Truncated SVD → Logistic Regression | Dense, `k` chiều |
-
-TF-IDF dùng unigram, `min_df=2`, sublinear TF và chuẩn hóa L2. Logistic Regression dùng `C=1`, `lbfgs`, `max_iter=2000`. Classifier giống nhau để khảo sát tác động của giảm chiều.
-
-`ToDense.transform(X)` đổi sparse thành dense cho PCA. Hàm ước lượng dung lượng đầu vào và chặn nếu vượt 128 MiB; đây chưa phải peak RAM vì PCA còn dùng bộ nhớ trung gian. Truncated SVD nhận sparse trực tiếp.
-
-## 5. Phần toán: `src/math_demo.py`
-
-- `pca_eigh(X, k)` học mean và các hướng chính từ covariance; trả dict chứa mean, components, eigenvalues.
-- `pca_transform(X, fit)` chiếu bằng mean và components đã học; trả ma trận giảm chiều `Z`.
-- `pca_inverse(Z, fit)` tái tạo gần đúng dữ liệu, có cộng lại mean.
-- `run_demo()` tạo ma trận 6×4 và chạy kiểm chứng; trả dict lưu được vào JSON.
-
-SVD dùng `X = UΣVᵀ`, giữ `k` thành phần và chiếu `Z = XV_k`. PCA center `X_c = X − mean`, rồi tìm các hướng phương sai lớn. Demo kiểm chứng:
-
-```text
-eigenvalue_j = singular_value_j(X_c)² / (N − 1)
-```
-
-Code so projector của hai không gian con để không nhầm các vector chỉ khác dấu. Demo cũng kiểm tra trực giao, reconstruction, sai số giảm khi tăng `k` và đối chiếu NumPy với scikit-learn. Đây là ví dụ toán nhỏ, không thay cho thí nghiệm SMS.
-
-## 6. Huấn luyện: `src/train.py`
-
-`run(data_path, output_root)` điều phối sáu bước: tạo output → chuẩn bị dữ liệu → thử `k` → khóa lựa chọn → refit/test → lưu cấu hình và vẽ hình.
-
-Khi dùng terminal, chạy `python -m src.data --download` trước `python -m src.train` ở lần đầu; `src.train` đọc dataset cục bộ và không tự tải. Các pipeline được lưu vào `outputs/models/` sau khi huấn luyện để bước dự đoán sử dụng. Chạy toàn bộ notebook cũng thực hiện tải dữ liệu nếu thiếu và tạo các model này.
-
-| Hàm | Vai trò và đầu ra |
+| Hàm | Làm gì |
 |---|---|
-| `prepare_output_and_logger` | Tạo `outputs/results`, `outputs/figures`, `outputs/models`; trả logger và đường dẫn kết quả |
-| `prepare_data_and_audit` | Đọc/chia dữ liệu; lưu thống kê và tạo file ID từng split trên máy; trả `splits` |
-| `fit_evaluate` | Nhận phương pháp, `k`, train và evaluation; trả pipeline đã fit, một dòng metrics và nhãn dự đoán |
-| `score_predictions` | Nhận nhãn thật/dự đoán; trả accuracy, macro-F1 và precision/recall/F1 lớp spam |
-| `run_validation_sweep` | Fit baseline và grid `k`; lưu `validation_metrics.csv` |
-| `choose_k` | Chọn macro-F1 validation cao nhất; hòa thì lấy `k` nhỏ hơn |
-| `refit_and_evaluate_test` | Fit train+validation với `k` đã khóa; lưu model, test metrics, confusion matrix và demo |
-| `save_run_config` | Lưu seed, tham số, phiên bản và phạm vi đo thời gian |
+| `normalize_text(text)` | Chữ thường, gộp khoảng trắng. Dùng chung khi làm sạch, huấn luyện và dự đoán. |
+| `download_data(path)` | Tải file `SMSSpamCollection` từ UCI nếu máy chưa có. |
+| `load_data(path)` | Đọc từng dòng `nhãn<TAB>tin nhắn`, rồi gọi `clean_data`. |
+| `clean_data(raw)` | Bỏ tin rỗng, bỏ nội dung có hai nhãn mâu thuẫn, giữ một bản cho mỗi nội dung. |
+| `stratified_split(df, (0.7, 0.15, 0.15), seed=42)` | Xáo riêng từng lớp bằng `np.random.default_rng(42)`, cắt `round(0.7·n)` tin cho train, `round(0.15·n)` cho validation, phần còn lại cho test. |
 
-`feature_fingerprint` băm vocabulary/IDF để kiểm tra các nhánh có cùng TF-IDF. `array_bytes` đo dữ liệu CSR hoặc dense. Thời gian fit gồm cả TF-IDF, reducer nếu có và classifier; inference lấy median của 5 batch sau warm-up.
+Loại trùng làm **trước** khi chia, nên một nội dung không thể nằm ở hai tập. Chia theo từng lớp giúp ba tập có cùng tỷ lệ spam.
 
-Train dùng để học; validation dùng để chọn `k`; test dùng để đánh giá cuối. Khi refit trên train+validation, TF-IDF và reducer được học lại trên phần development này. Test vẫn chỉ được transform. Không dùng output test để sửa `k`.
+## 4. TF-IDF: `src/tfidf.py`
 
-## 7. Dự đoán, biểu đồ và công cụ notebook
+- `tokenize(text)`: tách từ bằng regex `\b\w\w+\b`, tức chuỗi chữ hoặc số dài từ 2 ký tự.
+- `TfidfVectorizer.fit(texts)`: giữ các từ có `df ≥ 2`, rồi lấy 1000 từ có tổng số lần xuất hiện lớn nhất. Từ hòa nhau được xếp theo thứ tự chữ cái. Sau đó tính `idf = log((1+N)/(1+df)) + 1`.
+- `TfidfVectorizer.transform(texts)`: với mỗi tin, `tf = 1 + log f`, nhân với idf, rồi chia cho chuẩn L2 của hàng. Từ không có trong vocabulary bị bỏ qua. Tin không chứa từ nào trong vocabulary cho hàng toàn số 0 (20 tin trong train), nên mọi hàng có chuẩn ≤ 1.
 
-[src/predict.py](src/predict.py) có `predict_message(model, text)`: nhận pipeline đã học và SMS, trả dict `text`, `prediction`, `spam_probability`. Hàm tìm đúng cột `spam` theo `model.classes_`. Cần chạy huấn luyện hoặc notebook để tạo `.joblib` trên máy trước lần dự đoán đầu tiên; lệnh dự đoán chỉ nạp model đã tạo, không fit lại.
+`fit` chỉ được gọi trên train. Validation và test chỉ đi qua `transform`, nên từ chỉ có trong validation không bao giờ lọt vào vocabulary. Ma trận được lưu dạng dense: 3.611 × 1.000 số thực chỉ khoảng 29 MB.
 
-[src/plots.py](src/plots.py) đọc CSV/JSON đã lưu để vẽ hình; không train model. [scripts/run_notebook.py](scripts/run_notebook.py) chạy 16 ô bằng Python hiện tại rồi xuất báo cáo. [scripts/ipynb_to_markdown.py](scripts/ipynb_to_markdown.py) chỉ chuyển notebook đã có output thành Markdown và ảnh.
+## 5. SVD và PCA: `src/decomposition.py`
 
-Các file [tests/test_math.py](tests/test_math.py), [tests/test_pipeline.py](tests/test_pipeline.py), [tests/test_notebook_export.py](tests/test_notebook_export.py) và [tests/test_notebook_setup.py](tests/test_notebook_setup.py) kiểm tra toán, dữ liệu/pipeline, lưu/load, quá trình xuất output và cài thư viện bằng đúng Python của kernel. Log kiểm thử ở [outputs/results/test_output.txt](outputs/results/test_output.txt).
+| Hàm / lớp | Công thức |
+|---|---|
+| `top_eigenvectors(A, k)` | Orthogonal iteration: `Q ← QR(A·Q)`, λ_j = q_jᵀ A q_j. Dừng khi mọi λ_j đổi ít hơn `1e-8·λ_1` giữa hai vòng. Nếu chạm 5000 vòng mà chưa đạt thì in cảnh báo. |
+| `TruncatedSVD.fit(X)` | `A = XᵀX`, lấy k vector riêng lớn nhất làm `V_k`, σ_j = √λ_j. |
+| `transform(X)` | `Z = X·V_k` |
+| `inverse_transform(Z)` | `X_k = Z·V_kᵀ` |
+| `loss()` | `‖X − X_k‖²_F = Σ_{j>k} σ_j² = ‖X‖²_F − Σ_{j≤k} σ_j²` |
+| `score()` | `Σ_{j≤k} σ_j² / ‖X‖²_F` (tỷ lệ năng lượng giữ lại) |
+| `PCA` | Kế thừa `TruncatedSVD`. `fit` học `μ` từ train rồi làm SVD trên `X − μ`. `explained_variance_ = σ_j²/(N−1)`. `score()` là tỷ lệ phương sai giữ lại. |
 
-## 8. Đọc output và giải thích khi bảo vệ
+Tại sao orthogonal iteration hội tụ: mỗi lần nhân với `A = XᵀX`, thành phần theo hướng v_j được nhân với λ_j. Các hướng có λ lớn vì vậy lấn át dần, còn QR giữ các cột trực chuẩn để chúng không cùng đổ về v_1. Khi các λ_j gần bằng nhau (như ở k = 100), vòng lặp hội tụ chậm hơn. Số vòng thực tế được ghi trong cột `decomposition_iterations` của `outputs/results/*_metrics.csv`.
 
-- **Số liệu chính:** [validation_metrics.csv](outputs/results/validation_metrics.csv), [test_metrics.csv](outputs/results/test_metrics.csv).
-- **Cấu hình và lựa chọn:** [run_config.json](outputs/results/run_config.json), [selected_k.json](outputs/results/selected_k.json).
-- **Minh chứng toán/demo:** [math_demo.json](outputs/results/math_demo.json), [demo_predictions.json](outputs/results/demo_predictions.json).
-- **Mô hình đã học trên máy:** `outputs/models/`, được tạo sau khi huấn luyện và không đăng kèm GitHub; cần source và thư viện tương thích để nạp pipeline.
-- **Kết quả theo từng bản ghi trên máy:** `outputs/results/split_assignments.csv` và `outputs/results/test_predictions.csv`; được tạo khi chạy và không đăng kèm GitHub. Các bảng tổng hợp, cấu hình và biểu đồ vẫn được giữ làm minh chứng trong tài liệu.
+Trị riêng hội tụ nhanh hơn vector riêng: sai số vector cỡ căn bậc hai sai số trị riêng. Vì vậy test chạy với `tol = 1e-14` (chặt hơn mặc định `1e-8`) trên một ma trận nhỏ 40 × 8, rồi so σ với NumPy tới `1e-8` và projector của không gian con tới `1e-6`. Với dữ liệu thật và `tol = 1e-8`, notebook kiểm tra phần dư `‖XᵀXv_j − λ_j v_j‖/λ_1` (cỡ 1e-5) và so loss với 100 hướng ngẫu nhiên. Dự đoán của Logistic Regression (có phạt L2) chỉ phụ thuộc vào không gian con mà V_k sinh ra, không phụ thuộc cách chọn cơ sở trực chuẩn trong không gian đó.
 
-Macro-F1 trung bình F1 hai lớp nên hữu ích khi ham/spam mất cân bằng. Spam recall cho biết bắt được bao nhiêu spam; spam precision cho biết các dự đoán spam đúng bao nhiêu. Xác suất demo là ước lượng, chưa được hiệu chỉnh riêng.
+## 6. Logistic Regression: `src/logistic.py`
 
-PCA variance đo dữ liệu đã center; SVD energy đo dữ liệu không center. Không xem chúng là cùng tỷ lệ. Giảm `D` xuống `k` cũng chưa bảo đảm giảm dung lượng vì sparse có thể thành dense. Trong snapshot kèm project, baseline tốt hơn hai nhánh giảm chiều; hãy dùng số liệu thật để giải thích trade-off thay vì mặc định giảm chiều luôn tốt hơn.
+Lớp `LogisticRegressionGD` đi đúng mạch 5 bước **mô hình → loss → gradient → tối ưu → score**. Bước cuối gồm hai hàm `predict` và `score`, nên trong code có 6 hàm, đánh số 1–6 theo đúng thứ tự. Docstring của mỗi hàm ghi công thức:
+
+| Bước | Hàm | Công thức |
+|---|---|---|
+| 1. Mô hình | `sigmoid`, `predict_proba` | `z = Xw + b`, `p = σ(z) = 1/(1 + e^(−z))` |
+| 2. Loss | `loss` | `J = −(1/N) Σ [y log p + (1−y) log(1−p)] + (λ/2N)‖w‖²`, p clip vào `[1e-12, 1−1e-12]` |
+| 3. Gradient | `gradient` | `∂J/∂w = (1/N)Xᵀ(p − y) + (λ/N)w`, `∂J/∂b = (1/N)Σ(p − y)` |
+| 4. Tối ưu | `fit` | `w ← w − η∂J/∂w`, `b ← b − η∂J/∂b`; lưu `loss_history_`; dừng khi đủ epoch hoặc `|ΔJ| < tol` |
+| 5. Dự đoán và score | `predict`, `score` | spam nếu `p ≥ 0.5`; accuracy, precision/recall/F1 lớp spam, macro-F1 (gọi `metrics.py`) |
+
+`gradient_check(X, y)` so gradient công thức với sai phân trung tâm `(J(θ+ε) − J(θ−ε))/2ε` tại một điểm ngẫu nhiên và trả sai số lớn nhất. Yêu cầu sai số < 1e-6.
+
+**Siêu tham số đã chọn:** λ = 1, η = 2, tối đa 20.000 epoch, tol = 1e-10.
+
+- λ = 1 cho cùng hàm mục tiêu với hệ số `C = 1` của bản trước.
+- η = 2. GD bảo đảm J giảm khi `η < 2/L`, với L là hằng số Lipschitz của gradient: `L ≤ ¼·λ_max([X 1]ᵀ[X 1])/N + λ/N` vì σ' ≤ 1/4. Trị riêng lớn nhất không vượt tổng đường chéo, `λ_max ≤ Σ_i(‖x_i‖² + 1) ≤ 2N`, vì mỗi hàng có chuẩn ≤ 1. Với Z của SVD/PCA cũng có `‖Z‖²_F ≤ N`. Suy ra `L ≤ 0,5 + λ/N` cho cả ba pipeline. Notebook tính cận trên này trên dữ liệu thật (0,2575, tức J chắc chắn giảm khi η < 7,77) bằng `top_eigenvectors` với k = 1, và cho thấy η = 50 làm loss dao động.
+- tol = 1e-10 và 20.000 epoch: mọi lần huấn luyện đều dừng vì `|ΔJ| < tol` trước khi chạm giới hạn epoch (cột `gd_epochs` trong kết quả).
+
+## 7. Score function: `src/metrics.py`
+
+| Hàm | Làm gì |
+|---|---|
+| `confusion_matrix(y_true, y_pred)` | Trả `[[TN, FP], [FN, TP]]`, với 1 = spam. Hàng là nhãn thật, cột là nhãn dự đoán. |
+| `precision_recall_f1(tp, fp, fn)` | `P = TP/(TP+FP)`, `R = TP/(TP+FN)`, `F1 = 2PR/(P+R)`. Mẫu số bằng 0 thì trả 0. |
+| `classification_scores(y_true, y_pred)` | accuracy, precision/recall/F1 lớp spam, F1 lớp ham (đổi vai: TP_ham = TN, FP_ham = FN, FN_ham = FP), macro-F1 = trung bình F1 hai lớp. |
+
+Ví dụ 6 tin tính tay (TP = 1, FN = 1, FP = 1, TN = 3, macro-F1 = 0,625) có trong notebook mục 6.5 và trong `tests/test_metrics.py`.
+
+## 8. Ghép pipeline và lưu model: `src/pipeline.py`
+
+- `SpamPipeline(method, k)`: `method` là `baseline`, `svd` hoặc `pca`. `fit` lần lượt học TF-IDF → reducer (nếu có) → Logistic Regression trên train. `predict`, `predict_proba` và `score` chỉ dùng lại tham số đã học.
+- `save_pipeline(model, path)` ghi `path.npz` (idf, V_k, σ, ‖X‖²_F, μ và phương sai nếu là PCA, w, b) bằng `np.savez`, và `path.json` (method, k, vocabulary).
+- `load_pipeline(path)` đọc lại hai file đó, không fit lại.
+- Hằng số: `SEED = 42`, `MAX_FEATURES = 1000`, `MIN_DF = 2`, `K_VALUES = (10, 50, 100)`.
+
+## 9. Thí nghiệm: `src/train.py`
+
+`run()` (hoặc `python -m src.train`) thực hiện 4 bước:
+
+1. `prepare_data`: đọc, làm sạch, chia tập, lưu `data_summary.json`.
+2. `run_validation_sweep`: với baseline và mỗi k của SVD/PCA, gọi `fit_and_score` (fit trên train, score trên validation). Kết quả lưu ở `validation_metrics.csv`. σ của k = 100 được lưu ở `spectrum.json` để vẽ score theo k.
+3. `choose_k`: chọn k có macro-F1 validation cao nhất; bằng nhau thì lấy k nhỏ hơn. Kết quả lưu ở `selected_k.json`.
+4. `refit_and_test`: fit lại trên train + validation với k đã khóa, đánh giá test một lần. Kết quả lưu ở `test_metrics.csv`, `confusion_matrices.json`, `loss_history.json`, `demo_predictions.json` và model trong `outputs/models/`.
+
+Cuối cùng `save_run_config` ghi lại mọi tham số, và `make_plots` vẽ lại các biểu đồ.
+
+Các cột chính trong CSV: `accuracy`, `spam_precision`, `spam_recall`, `spam_f1`, `ham_f1`, `macro_f1` (score của classifier); `reconstruction_loss`, `retained_ratio` (loss và score của SVD/PCA trên tập fit); `decomposition_iterations`, `gd_epochs` (số vòng lặp đến khi hội tụ); `final_train_loss` (J cuối của GD).
+
+## 10. Biểu đồ, dự đoán và scripts
+
+- [src/plots.py](src/plots.py): mỗi hình là một hàm, vẽ từ số đã lưu. Confusion matrix vẽ bằng `plt.imshow` và `plt.text` ghi số lên từng ô. Các hình lưu trong `outputs/figures/`: `class_distribution`, `retention`, `learning_rate`, `validation_f1`, `loss_curve`, `test_confusion`.
+- [src/predict.py](src/predict.py): `predict_message(model, text)` trả nhãn và P(spam). Dòng lệnh: `python -m src.predict --model outputs/models/svd --text "..."`.
+- [scripts/run_notebook.py](scripts/run_notebook.py): chạy notebook từ đầu rồi xuất `KET_QUA_MO_HINH.md`.
+- [scripts/ipynb_to_markdown.py](scripts/ipynb_to_markdown.py): chỉ chuyển notebook đã chạy thành Markdown, không chạy lại.
+
+## 11. Kiểm thử: `tests/`
+
+Chạy: `python -m unittest discover -s tests -v`
+
+| File | Kiểm tra |
+|---|---|
+| `test_data.py` | Làm sạch đúng; ba tập không trùng nhau, phủ đủ dữ liệu, giữ tỷ lệ lớp; cùng seed cho cùng kết quả. |
+| `test_tfidf.py` | Công thức tf-idf khớp ví dụ tính tay; `min_df`/`max_features`; hàng có chuẩn 1, hoặc bằng 0 nếu tin không có từ nào trong vocabulary; từ chỉ có trong validation không vào vocabulary. |
+| `test_decomposition.py` | SVD/PCA tự viết khớp `np.linalg.svd`/`np.linalg.eigh` (σ, phương sai, projector của không gian con); loss = Σ_{j>k} σ_j²; PCA dùng mean của train; cảnh báo khi chưa hội tụ. |
+| `test_logistic.py` | Gradient check < 1e-6; J(0) = log 2; loss không tăng khi huấn luyện; ∇J ≈ 0 tại điểm dừng; λ lớn cho w nhỏ hơn. |
+| `test_metrics.py` | Ví dụ 6 tin tính tay; trường hợp không dự đoán spam nào. |
+| `test_pipeline.py` | Ba pipeline học được dữ liệu nhỏ; predict không đổi tham số đã học; lưu/đọc model cho cùng xác suất; quy tắc chọn k. |
+| `test_notebook_export.py` | Xuất Markdown giữ đúng code, output, hình; từ chối notebook chưa chạy hoặc có lỗi. |

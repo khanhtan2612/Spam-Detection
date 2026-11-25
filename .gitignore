@@ -16,5 +16,5 @@ dist/
 # Dữ liệu và model được tải hoặc tạo lại trên máy người chạy.
 data/raw/
 outputs/models/
+# File chia tập của bản trước, chỉ giữ trên máy để đối chiếu (README, mục 4).
 outputs/results/split_assignments.csv
-outputs/results/test_predictions.csv

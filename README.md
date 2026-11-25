@@ -1,147 +1,111 @@
-# Phát hiện SMS spam với PCA và SVD
+# Phát hiện SMS spam bằng SVD và PCA
 
-Đồ án Machine Learning nhỏ bằng Python, dành cho sinh viên mới học. Project so sánh **TF-IDF + Logistic Regression** với hai phương án giảm chiều bằng **PCA** và **Truncated SVD**. Dữ liệu là SMS tiếng Anh có nhãn `ham` (bình thường) hoặc `spam` (tin nhắn rác). Chương trình chạy trên CPU; không cần GPU.
+Đồ án môn Toán cho Khoa học Máy tính. Project so sánh **TF-IDF + Logistic Regression** với hai cách giảm chiều trước khi phân loại: **SVD** và **PCA**. Mọi thuật toán (TF-IDF, SVD, PCA, Logistic Regression, các độ đo) đều được **tự cài bằng NumPy**, không dùng thư viện học máy. pandas chỉ dùng để đọc và ghi bảng, matplotlib chỉ dùng để vẽ.
 
 ## 1. Bắt đầu từ đâu?
 
-| **Bạn muốn xem** | **File cần mở** | **Vai trò** |
-|---|---|---|
-| **Source code để học và thuyết trình** | **[svd_pca_spam.ipynb](svd_pca_spam.ipynb)** | Giải thích → code → output → biểu đồ → nhận xét; có 16 ô code chạy theo thứ tự. |
-| **Giải thích từng phần code** | **[GIAI_THICH_CODE.md](GIAI_THICH_CODE.md)** | Bản đồ 16 ô notebook và các hàm Python được gọi. |
-| **Tài liệu dành cho người đọc** | **[README.md](README.md)** | Tổng quan, cấu trúc, cách chạy và cách đọc kết quả. |
-| **Output thực tế của mô hình** | **[KET_QUA_MO_HINH.md](KET_QUA_MO_HINH.md)** | Bản xuất notebook có code, bảng số liệu, hình và output đã chạy. |
+| Muốn xem | Mở file |
+|---|---|
+| Cơ sở toán học: định nghĩa, định lý, chứng minh, công thức (1)–(39) và bảng tra công thức → code | [script.md](script.md) |
+| Bài làm chính: công thức → code → kết quả → nhận xét | [svd_pca_spam.ipynb](svd_pca_spam.ipynb) |
+| Bản đã chạy, đọc được không cần Jupyter | [KET_QUA_MO_HINH.md](KET_QUA_MO_HINH.md) |
+| Mỗi file và mỗi hàm làm gì | [GIAI_THICH_CODE.md](GIAI_THICH_CODE.md) |
+| Kịch bản thuyết trình 8–10 phút | [outputs/KICH_BAN_THUYET_TRINH_SVD_PCA.md](outputs/KICH_BAN_THUYET_TRINH_SVD_PCA.md) |
 
-Nếu chỉ cần xem bài làm, đọc file này rồi mở **KET_QUA_MO_HINH.md**. Nếu cần hiểu cách triển khai, đọc **GIAI_THICH_CODE.md** song song với notebook. Các bảng kết quả làm minh chứng nằm trong [outputs/results/](outputs/results/).
+Thứ tự đọc gợi ý: đọc [script.md](script.md) để nắm phần toán, rồi đọc notebook (hoặc KET_QUA_MO_HINH.md) để xem từng công thức được cài và kiểm chứng ra sao. Khi cần sửa code, dùng bảng tra ở cuối script.md cùng với GIAI_THICH_CODE.md.
 
-## 2. Bài toán và hướng thực hiện
+## 2. Bài toán và mạch trình bày
 
-Input là một tin nhắn tiếng Anh. Output gồm nhãn dự đoán và xác suất spam do mô hình ước lượng.
+Input là một tin nhắn SMS tiếng Anh. Output là nhãn `ham` (tin thường) hoặc `spam` (tin rác), kèm xác suất P(spam).
 
 ```text
-SMS → TF-IDF (tối đa 1.000 đặc trưng)
-          ├─ Logistic Regression
-          ├─ PCA → Logistic Regression
-          └─ Truncated SVD → Logistic Regression
+SMS → TF-IDF (1000 chiều) ─┬──────────────────→ Logistic Regression   (baseline)
+                           ├─ SVD (k chiều) ──→ Logistic Regression
+                           └─ PCA (k chiều) ──→ Logistic Regression
 ```
 
-TF-IDF đổi văn bản thành số. PCA/SVD giữ lại `k` tọa độ để khảo sát ảnh hưởng của giảm chiều. Logistic Regression là classifier dùng chung, giúp so sánh ba biểu diễn.
+Mọi bước học đều đi theo cùng một mạch **mô hình → loss → tối ưu → score**:
 
-Dữ liệu lấy từ [UCI SMS Spam Collection](https://archive.ics.uci.edu/dataset/228/sms%2Bspam%2Bcollection), do Tiago Almeida và José María Gómez Hidalgo cung cấp theo giấy phép **CC BY 4.0**. Dataset không được đóng gói trong repository; khi chạy, người đọc tải từ nguồn UCI như mục 5. Bản kết quả kèm theo đọc **5.574 dòng**, loại **415 bản trùng**, còn **5.159 SMS**: 4.517 ham và 642 spam. Dữ liệu được chia khoảng **70%/15%/15%**, tương ứng **3.611 train / 774 validation / 774 test**. Xem [thống kê dữ liệu](outputs/results/data_summary.json).
+| | Mô hình | Loss | Tối ưu | Score |
+|---|---|---|---|---|
+| SVD / PCA | $X \approx X_k = Z V_k^T$ | $\Vert X - X_k \Vert_F^2 = \sum_{j \gt k} \sigma_j^2$ | orthogonal iteration (nhân ma trận + QR) | tỷ lệ năng lượng (SVD) / phương sai (PCA) giữ lại |
+| Logistic Regression | $p = \sigma(Xw + b)$ | cross-entropy + $\frac{\lambda}{2N}\Vert w \Vert^2$ | gradient descent | accuracy, precision, recall, F1, macro-F1 |
 
-Chỉ train được dùng để học vocabulary, IDF và hướng chiếu. Thử `k = 10, 50, 100`, chọn bằng macro-F1 validation, rồi fit lại trên train + validation và đánh giá test. Test không dùng để chọn `k`.
+Phần Logistic Regression đi đủ 5 bước, mỗi bước là một hoặc hai hàm trong [src/logistic.py](src/logistic.py): mô hình (`sigmoid`, `predict_proba`) → loss (`loss`) → gradient (`gradient`, có gradient check) → tối ưu bằng gradient descent (`fit`) → dự đoán và score (`predict`, `score`).
 
-## 3. Cấu trúc thư mục
+## 3. Dữ liệu
+
+Dữ liệu lấy từ [UCI SMS Spam Collection](https://archive.ics.uci.edu/dataset/228/sms+spam+collection) của Tiago Almeida và José María Gómez Hidalgo, giấy phép **CC BY 4.0**. Repository không chứa dataset.
+
+- Đọc **5.574** dòng, bỏ **415** tin trùng nội dung, còn **5.159** tin: 4.517 ham và 642 spam (12,4%).
+- `stratified_split(df, (0.7, 0.15, 0.15), seed=42)` chia theo từng lớp thành **3.611 train / 774 validation / 774 test**. Tỷ lệ spam của ba tập lần lượt là 12,4% / 12,4% / 12,5%.
+- Train dùng để học vocabulary, idf, $V_k$, $\mu$, $w$, $b$. Validation dùng để chọn k ∈ {10, 50, 100}. Test chỉ được dùng **một lần** sau khi đã khóa k và fit lại trên train + validation.
+
+## 4. Kết quả
+
+**Chọn k trên validation** (fit trên 3.611 tin train):
+
+| Pipeline | k | Score SVD/PCA (giữ lại) | Recall spam | Macro-F1 |
+|---|---:|---:|---:|---:|
+| Baseline | — | — | 0,7708 | 0,9215 |
+| SVD | 10 / 50 / **100** | 0,106 / 0,289 / 0,431 | 0,552 / 0,656 / 0,729 | 0,8349 / 0,8759 / **0,9065** |
+| PCA | 10 / 50 / **100** | 0,082 / 0,269 / 0,415 | 0,573 / 0,656 / 0,719 | 0,8441 / 0,8759 / **0,9027** |
+
+Cả SVD và PCA đều chọn **k = 100**.
+
+**Đánh giá test một lần** (fit lại trên 4.385 tin train + validation, test 774 tin, trong đó 97 spam):
+
+| Pipeline | Số chiều | Accuracy | Precision spam | Recall spam | F1 spam | Macro-F1 |
+|---|---:|---:|---:|---:|---:|---:|
+| Baseline | 1.000 | 0,9780 | 0,9762 | 0,8454 | 0,9061 | **0,9468** |
+| SVD | 100 | 0,9703 | 0,9744 | 0,7835 | 0,8686 | 0,9259 |
+| PCA | 100 | 0,9703 | 0,9744 | 0,7835 | 0,8686 | 0,9259 |
+
+Số chính xác nằm trong [validation_metrics.csv](outputs/results/validation_metrics.csv) và [test_metrics.csv](outputs/results/test_metrics.csv). Các hình đi kèm: [loss theo epoch](outputs/figures/loss_curve.png), [confusion matrix](outputs/figures/test_confusion.png), [chọn k](outputs/figures/validation_f1.png), [score SVD/PCA theo k](outputs/figures/retention.png).
+
+**Đọc kết quả**
+
+- Giảm từ 1.000 xuống 100 chiều làm macro-F1 test giảm 0,021. Ba mô hình đều chỉ báo nhầm 2/677 tin ham, nhưng SVD/PCA bỏ sót 21/97 tin spam, so với 15/97 của baseline.
+- Khi fit trên 3.611 tin train, 100 chiều chỉ giữ 43,1% năng lượng (SVD) và 41,5% phương sai (PCA); khi fit lại trên train + validation, các con số này là 42,6% và 41,0%. Giả thuyết của em: SVD/PCA tìm hướng có loss tái tạo nhỏ nhất mà không nhìn nhãn, nên phần bị bỏ đi có thể vẫn chứa tín hiệu phân biệt spam. Đồ án chưa có thí nghiệm riêng để kiểm chứng điều này.
+- Gradient descent hội tụ ở cả ba pipeline: loss giảm sau mọi epoch, và vòng lặp dừng vì $|\Delta J| \lt 10^{-10}$ sau 7.273–9.765 epoch, chưa chạm giới hạn 20.000.
+
+**So với bản trước.** Baseline bản trước đạt macro-F1 test 0,9310, bản này đạt 0,9468. Chênh lệch đến từ cách chia tập mới (`stratified_split` tự viết cho ra một tập test khác), không phải từ thuật toán. Khi chạy code mới (cùng hàm `fit_and_score`) trên đúng cách chia của bản trước, baseline cho macro-F1 test **0,9310**, trùng với bản trước. Đây là kiểm tra làm riêng một lần, không nằm trong notebook; file chia tập của bản trước (`outputs/results/split_assignments.csv`) chỉ có trên máy, không đưa lên Git. Cùng lần kiểm tra đó, SVD và PCA với k = 100 cho 0,8802, nhỉnh hơn bản trước (0,872 và 0,876), có thể vì bản này lặp đến khi phân rã hội tụ thay vì dùng phép xấp xỉ ngẫu nhiên.
+
+## 5. Cấu trúc thư mục
 
 ```text
 .
-├── README.md                 # Hướng dẫn người đọc
-├── GIAI_THICH_CODE.md         # Giải thích các phần code
-├── KET_QUA_MO_HINH.md         # Notebook xuất ra Markdown, kèm output
-├── svd_pca_spam.ipynb         # Source dạng notebook
-├── requirements.txt          # Thư viện đã dùng
-├── src/                      # Source Python: dữ liệu, toán, train, predict, vẽ hình
-├── scripts/                  # Chạy notebook và xuất Markdown
-├── tests/                    # Kiểm tra toán, pipeline và xuất notebook
-├── data/raw/                 # Tạo khi tải UCI trên máy, không theo dõi trong Git
+├── README.md                  # Tài liệu này
+├── script.md                  # Cơ sở toán học: định lý, chứng minh, bảng tra công thức → code
+├── GIAI_THICH_CODE.md          # Giải thích từng file, từng hàm
+├── KET_QUA_MO_HINH.md          # Notebook đã chạy, xuất ra Markdown
+├── svd_pca_spam.ipynb          # Bài làm chính
+├── requirements.txt           # numpy, pandas, matplotlib + công cụ chạy notebook
+├── slide/                     # Sơ đồ pipeline (PNG) dùng khi thuyết trình
+├── src/
+│   ├── data.py                # Đọc, làm sạch, stratified_split
+│   ├── tfidf.py               # TF-IDF tự cài
+│   ├── decomposition.py       # Orthogonal iteration, SVD, PCA (loss, score)
+│   ├── logistic.py            # Logistic Regression: mô hình → loss → gradient → GD → score
+│   ├── metrics.py             # Confusion matrix, precision, recall, F1, macro-F1
+│   ├── pipeline.py            # Ghép TF-IDF → SVD/PCA → Logistic Regression; lưu/đọc model
+│   ├── train.py               # Chọn k → refit → test
+│   ├── plots.py               # Vẽ biểu đồ
+│   └── predict.py             # Dự đoán một SMS bằng model đã lưu
+├── scripts/                   # Chạy notebook và xuất Markdown
+├── tests/                     # Kiểm thử (unittest)
+├── data/raw/                  # Dataset UCI (không đưa lên Git)
 └── outputs/
-    ├── models/               # Tạo khi train trên máy, không theo dõi trong Git
-    ├── results/              # Bảng số liệu, JSON và log minh chứng
-    └── figures/              # Biểu đồ PNG kèm tài liệu
+    ├── results/               # CSV/JSON kết quả
+    ├── figures/               # Biểu đồ PNG
+    ├── models/                # Model .npz + .json (không đưa lên Git)
+    └── KICH_BAN_THUYET_TRINH_SVD_PCA.md
 ```
 
-`src/` và notebook chứa **source code**. CSV/PNG được giữ làm **kết quả thực nghiệm** để người đọc xem tài liệu. Thư mục `data/raw/` và `outputs/models/` được tạo khi chạy trên máy và không nằm trong bản GitHub. Sau khi huấn luyện, mỗi file `.joblib` chứa TF-IDF, reducer nếu có và classifier đã học.
+## 6. Kiểm chứng
 
-Các file theo từng bản ghi `outputs/results/split_assignments.csv` và `outputs/results/test_predictions.csv` cũng chỉ được sinh trên máy, không đăng kèm GitHub. Repository giữ các bảng tổng hợp, cấu hình và biểu đồ để đọc kết quả.
+Thư mục `tests/` kiểm tra: SVD/PCA tự viết khớp `np.linalg.svd`/`np.linalg.eigh` (σ và projector của không gian con), gradient check, ví dụ confusion matrix/F1 tính tay, ba tập không trùng nhau và giữ tỷ lệ lớp, TF-IDF không học từ validation. `np.linalg.svd`/`eigh` chỉ dùng trong test để đối chiếu, không dùng trong pipeline.
 
-## 4. Cài đặt trong VS Code
+## 7. Giới hạn
 
-Mở thư mục project bằng **File → Open Folder**, sau đó **Terminal → New Terminal**. Các lệnh sau chạy tại thư mục có `README.md`, `src/` và notebook, không nhập vào file `.py`.
-
-Bản kết quả kèm theo dùng Python **3.14.7**; phiên bản thư viện được ghim trong `requirements.txt` và ghi tại [run_config.json](outputs/results/run_config.json).
-
-Nếu chưa có `.venv`:
-
-```powershell
-python -m venv .venv
-```
-
-Cài thư viện bằng đúng Python của môi trường này:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-Trong VS Code, cài extension **Python** và **Jupyter** của Microsoft. Mở notebook → **Select Kernel** → chọn Python trong `.venv` → **Run All**. Output xuất hiện dưới mỗi ô code. Chạy từ đầu theo thứ tự để các biến được tạo đầy đủ.
-
-Ô dữ liệu của notebook tự tải dataset từ UCI vào `data/raw/` nếu chưa có file; lần đầu cần Internet. Chạy tiếp các ô huấn luyện sẽ tạo ba model trong `outputs/models/` để ô dự đoán sử dụng.
-
-Ô đầu notebook kiểm tra các thư viện và tự cài từ `requirements.txt` bằng đúng Python của kernel nếu còn thiếu, gồm cả `joblib`. Bước này cần Internet khi phải tải thư viện. Nếu cài đặt thất bại, ô sẽ báo lệnh cài kèm đường dẫn Python đang chạy; sau khi xử lý, chạy lại từ ô đầu. Khi đủ thư viện, bước kiểm tra không cài lại. Hướng dẫn thao tác được giữ trong README; notebook tập trung vào nội dung bài toán, code và kết quả.
-
-## 5. Chạy bằng terminal
-
-**Tải dữ liệu và huấn luyện trước lần dự đoán đầu tiên:**
-
-```powershell
-.\.venv\Scripts\python.exe -m src.data --download
-.\.venv\Scripts\python.exe -m src.train
-```
-
-Lệnh đầu tải dữ liệu chính thức vào `data/raw/`, kèm README nguồn và thông tin gói tải; nếu đã có dataset thì không tải lại. `src.train` đọc file đã tải và tạo `baseline.joblib`, `pca.joblib`, `svd.joblib` trong `outputs/models/`. Cần tải dữ liệu trước khi chạy `src.train` trực tiếp.
-
-**Dự đoán sau khi huấn luyện:**
-
-```powershell
-.\.venv\Scripts\python.exe -m src.predict --model outputs/models/svd.joblib --text "Can we meet at the library tomorrow?"
-```
-
-Thay nội dung sau `--text` để thử SMS khác. Đổi tên model thành `baseline.joblib` hoặc `pca.joblib` để thử hai pipeline còn lại. Những lần dự đoán tiếp theo chỉ nạp model đã tạo trên máy, không cần huấn luyện lại.
-
-**Chạy toàn bộ notebook và cập nhật file output:**
-
-```powershell
-.\.venv\Scripts\python.exe -m scripts.run_notebook
-```
-
-Lệnh này chạy notebook từ đầu, tự tải UCI nếu thiếu rồi huấn luyện và tạo các model trên máy.
-
-**Các lệnh riêng khi cần:**
-
-```powershell
-# Huấn luyện lại từ dữ liệu đã tải và tạo kết quả trong outputs/.
-.\.venv\Scripts\python.exe -m src.train
-
-# Kiểm chứng toán trên ma trận nhỏ.
-.\.venv\Scripts\python.exe -m src.math_demo
-
-# Chạy bộ kiểm tra.
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-
-# Chỉ xuất notebook đã lưu; không chạy lại model.
-.\.venv\Scripts\python.exe -m scripts.ipynb_to_markdown svd_pca_spam.ipynb --output KET_QUA_MO_HINH.md
-```
-
-Sau khi train riêng, chạy notebook để cập nhật cả nội dung và output của báo cáo. Chạy lại sẽ ghi đè các artifact tương ứng.
-
-## 6. Đọc kết quả
-
-Snapshot test kèm project:
-
-| Pipeline | Số chiều | Accuracy | Macro-F1 | Spam recall |
-|---|---:|---:|---:|---:|
-| Baseline | 1.000 | 97,29% | 0,9310 | 78,13% |
-| PCA | 100 | 95,48% | 0,8760 | 63,54% |
-| Truncated SVD | 100 | 95,35% | 0,8717 | 62,50% |
-
-Xem số chính xác trong [test_metrics.csv](outputs/results/test_metrics.csv), các ứng viên trong [validation_metrics.csv](outputs/results/validation_metrics.csv) và [confusion matrix](outputs/figures/test_confusion.png).
-
-PCA/SVD giảm **90% số chiều** nhưng macro-F1 giảm và bỏ sót nhiều spam hơn baseline. Biểu diễn giảm chiều là dense nên có thể tốn dung lượng hơn sparse TF-IDF. Đây là kết quả cần phân tích khi bảo vệ: giữ cấu trúc ma trận chưa chắc giữ được các dấu hiệu phân loại.
-
-PCA variance và SVD energy có định nghĩa khác nhau. Accuracy cũng chưa đủ vì ham chiếm đa số. Kết quả chỉ dựa trên một split của SMS tiếng Anh; demo không xác nhận khả năng lọc spam tiếng Việt hoặc spam mới. Thời gian chạy phụ thuộc máy.
-
-## 7. Mang project sang máy khác hoặc đưa lên GitHub
-
-Trên GitHub, chọn **Code → Download ZIP**, giải nén và mở thư mục chứa README trong VS Code. Nếu đã cài Git, có thể chọn **Code**, sao chép URL HTTPS rồi dùng `git clone <URL>` để tải repository. Sau đó tạo môi trường và cài thư viện như mục 4, rồi chạy notebook hoặc tải dữ liệu và huấn luyện như mục 5.
-
-Repository gồm source trong `src/`, các script trong `scripts/`, notebook có output, tài liệu hướng dẫn, bộ kiểm tra, hình và bảng kết quả minh chứng. Dataset UCI và model `.joblib` không được đăng kèm. Nguồn và giấy phép dataset được dẫn ở mục 2; khi tải dữ liệu, script lưu thêm `data/raw/UCI_README.txt` trên máy.
-
-Môi trường `.venv`, cache, `data/raw/`, `outputs/models/`, hai CSV theo từng bản ghi nêu ở mục 3 và thư mục `dist/` được bỏ qua theo `.gitignore`; người đọc tạo lại môi trường, tải dữ liệu và huấn luyện trên máy mình. Gói `dist/SVD_PCA_Spam.zip` là bản chia sẻ cục bộ, không nằm trong repository GitHub.
+Kết quả dựa trên một lần chia dữ liệu, ba giá trị k và vocabulary 1.000 từ của SMS tiếng Anh. Chênh lệch giữa các mô hình chưa được kiểm định thống kê. Xác suất spam là ước lượng của mô hình, chưa được hiệu chỉnh.

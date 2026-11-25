@@ -1,46 +1,37 @@
 {
   "seed": 42,
-  "split_proportions": [
+  "split": [
     0.7,
     0.15,
     0.15
   ],
-  "max_features": 1000,
-  "min_df": 2,
-  "sublinear_tf": true,
-  "norm": "l2",
-  "ngram_range": [
-    1,
-    1
-  ],
-  "classifier": {
-    "name": "LogisticRegression",
-    "C": 1.0,
-    "solver": "lbfgs",
-    "max_iter": 2000
+  "tfidf": {
+    "max_features": 1000,
+    "min_df": 2,
+    "token_pattern": "\\b\\w\\w+\\b",
+    "tf": "1 + log f",
+    "idf": "log((1+N)/(1+df)) + 1",
+    "norm": "l2"
   },
-  "reducers": {
-    "pca": "randomized, whiten=False",
-    "svd": "randomized"
+  "decomposition": {
+    "k_values": [
+      10,
+      50,
+      100
+    ],
+    "method": "orthogonal iteration",
+    "tol": 1e-08,
+    "max_iter": 5000
   },
-  "valid_k": [
-    10,
-    50,
-    100
-  ],
-  "threshold": 0.5,
-  "blas_threads": 1,
+  "logistic_regression": {
+    "lambda": 1.0,
+    "learning_rate": 2.0,
+    "max_epochs": 20000,
+    "tol": 1e-10,
+    "threshold": 0.5
+  },
+  "selection": "validation macro-F1 cao nhất; bằng nhau thì lấy k nhỏ hơn",
   "python": "3.14.7",
-  "platform": "Windows-11-10.0.26200-SP0",
-  "versions": {
-    "numpy": "2.5.4",
-    "pandas": "3.0.6",
-    "scipy": "1.18.1",
-    "scikit-learn": "1.9.1",
-    "matplotlib": "3.11.2",
-    "joblib": "1.6.0",
-    "threadpoolctl": "3.7.0"
-  },
-  "timing_note": "fit includes TF-IDF + densify/reducer (if any) + classifier; inference median of 5 warm batches",
-  "information_metrics_fit_on": "training partition of each run"
+  "numpy": "2.5.4",
+  "pandas": "3.0.6"
 }

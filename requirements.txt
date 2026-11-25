@@ -1,11 +1,8 @@
 # Các phiên bản đã chạy kiểm chứng với Python 3.14.7 trên Windows.
+# Thuật toán (TF-IDF, SVD, PCA, Logistic Regression, độ đo) tự cài bằng NumPy.
 numpy==2.5.4
 pandas==3.0.6
-scipy==1.18.1
-scikit-learn==1.9.1
 matplotlib==3.11.2
-joblib==1.6.0
-threadpoolctl==3.7.0
 
 # Chạy notebook và xuất báo cáo.
 ipykernel==7.4.0

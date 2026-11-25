@@ -1,642 +1,676 @@
-# Giảm chiều dữ liệu văn bản bằng PCA và SVD để phát hiện SMS spam
+# Phát hiện SMS spam bằng SVD và PCA
 
-**Đồ án Toán cho Khoa học Máy tính và Machine Learning — Python, quy mô sinh viên.**
-Trình bày theo thứ tự **giải thích → code → output thật → nhận xét**, như một bài thực hành có thể chạy lại.
+Đồ án môn Toán cho Khoa học Máy tính. TF-IDF, SVD, PCA, Logistic Regression và các độ đo đều được tự cài bằng NumPy trong thư mục `src/`. Notebook gọi lại các hàm đó và giải thích từng bước theo thứ tự **công thức → code → kết quả → nhận xét**.
 
-## 1. Bài toán và câu hỏi nghiên cứu
+## 1. Bài toán
 
-Đầu vào là một SMS tiếng Anh. Đầu ra là nhãn **ham** (bình thường) hoặc **spam** (tin nhắn rác), cùng xác suất spam ước lượng.
-Ta dùng Logistic Regression làm classifier chung để tập trung vào PCA/SVD.
+**Input:** một tin nhắn SMS tiếng Anh. **Output:** nhãn `ham` (tin thường) hoặc `spam` (tin rác), kèm xác suất P(spam).
 
-- Giảm từ 1.000 đặc trưng TF-IDF xuống k chiều ảnh hưởng thế nào đến phân loại?
-- Khi tăng k, variance/energy giữ lại và macro-F1 thay đổi thế nào?
-- Giảm chiều có thực sự giảm thời gian và dung lượng biểu diễn không?
+Ta so sánh ba pipeline dùng chung một bộ phân loại:
 
 ```text
-SMS → làm sạch → chia tập → TF-IDF
-                           ├─ A. Logistic Regression (baseline)
-                           ├─ B. Dense → PCA → Logistic Regression
-                           └─ C. Truncated SVD → Logistic Regression
+SMS → TF-IDF (1000 chiều) ─┬──────────────────→ Logistic Regression   (baseline)
+                           ├─ SVD (k chiều) ──→ Logistic Regression
+                           └─ PCA (k chiều) ──→ Logistic Regression
 ```
 
-## 2. Chuẩn bị thư viện
+**Câu hỏi:** giảm từ 1000 chiều xuống k ∈ {10, 50, 100} chiều bằng SVD hoặc PCA thì khả năng phát hiện spam thay đổi thế nào?
 
-Tất cả phép học diễn ra trên CPU. Các helper trong `src/` giữ cùng một cách xử lý ở notebook và chương trình terminal.
-Ô đầu tự kiểm tra và cài các thư viện còn thiếu bằng Python của kernel hiện tại.
+Mọi bước học trong đồ án đều đi theo cùng một mạch: **mô hình → loss → tối ưu → score**.
+
+| Bước | Mô hình | Loss (càng nhỏ càng tốt) | Tối ưu | Score (đánh giá) |
+|---|---|---|---|---|
+| SVD / PCA | $X \approx X_k = Z V_k^T$ | sai số tái tạo $\Vert X - X_k \Vert_F^2$ | orthogonal iteration | tỷ lệ năng lượng / phương sai giữ lại |
+| Logistic Regression | $p = \sigma(Xw + b)$ | cross-entropy + L2 | gradient descent | accuracy, precision, recall, F1, **macro-F1** |
 
 ```python
 from pathlib import Path
 import os
 import sys
 
-# Tìm project trước khi nạp các module src, kể cả khi kernel ở thư mục con.
-PROJECT_ROOT = next(
-    (folder for folder in (Path.cwd(), *Path.cwd().parents)
-     if (folder / "src").is_dir() and (folder / "requirements.txt").is_file()),
-    None,
-)
-if PROJECT_ROOT is None:
-    raise FileNotFoundError("Không tìm thấy thư mục project chứa src/ và requirements.txt.")
+# Tìm thư mục project để chạy được cả khi mở notebook từ thư mục con.
+PROJECT_ROOT = next(p for p in (Path.cwd(), *Path.cwd().parents) if (p / "src").is_dir())
 os.chdir(PROJECT_ROOT)
-os.environ.setdefault("MPLCONFIGDIR", str(PROJECT_ROOT / ".mplconfig"))
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.notebook_setup import ensure_dependencies
-
-ensure_dependencies(PROJECT_ROOT)
-
-import io
 import json
-import unittest
 
-import joblib
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from IPython.display import Image, Markdown, display
-from threadpoolctl import threadpool_limits
 
+from src import plots
 from src.data import DEFAULT_DATA, download_data
-from src.models import make_pipeline, K_VALUES
-from src.math_demo import run_demo
-from src.train import (
-    prepare_output_and_logger, prepare_data_and_audit, fit_evaluate,
-    feature_fingerprint, choose_k, refit_and_evaluate_test,
-    save_run_config, save_json,
-)
-from src.plots import make_plots
+from src.decomposition import PCA, TruncatedSVD, top_eigenvectors
+from src.logistic import LogisticRegressionGD, gradient_check, sigmoid
+from src.metrics import classification_scores, confusion_matrix
+from src.pipeline import K_VALUES, METHODS, load_pipeline, to_binary
 from src.predict import predict_message
+from src.tfidf import TfidfVectorizer
+from src.train import (DEMO_MESSAGES, choose_k, prepare_data, refit_and_test,
+                       run_validation_sweep, save_json, save_run_config)
 
-cpu_limit = threadpool_limits(limits=1)
 OUTPUT_ROOT = Path("outputs")
-results, logger = prepare_output_and_logger(OUTPUT_ROOT)
+RESULTS, FIGURES = OUTPUT_ROOT / "results", OUTPUT_ROOT / "figures"
+for folder in (RESULTS, FIGURES, OUTPUT_ROOT / "models"):
+    folder.mkdir(parents=True, exist_ok=True)
 
-# Bảng Markdown không cần thêm dependency tabulate.
-def show_table(frame):
-    table = frame.copy()
-    for column in table.columns:
-        table[column] = table[column].map(
-            lambda x: f"{x:.4f}" if isinstance(x, (float, np.floating)) and pd.notna(x)
-            else ("—" if pd.isna(x) else str(x).replace("|", r"\|").replace("\n", " "))
-        )
-    lines = ["| " + " | ".join(map(str, table.columns)) + " |",
-             "| " + " | ".join(["---"] * len(table.columns)) + " |"]
-    lines += ["| " + " | ".join(row) + " |" for row in table.to_numpy().tolist()]
+
+def show_table(frame, digits=4):
+    """Hiển thị DataFrame thành bảng Markdown, số thực làm tròn."""
+    def cell(x):
+        if pd.isna(x):
+            return "—"
+        if isinstance(x, (float, np.floating)):
+            return f"{x:.{digits}f}"
+        return str(x).replace("|", "\\|")
+    lines = ["| " + " | ".join(frame.columns) + " |", "|" + "---|" * frame.shape[1]]
+    lines += ["| " + " | ".join(cell(x) for x in row) + " |" for row in frame.itertuples(index=False)]
     display(Markdown("\n".join(lines)))
 
-print(f"Python đang chạy: {sys.executable}")
-print("Đã nạp thư viện. CPU: một BLAS thread; seed mặc định: 42.")
+
+def show_figure(name):
+    display(Image(filename=FIGURES / name))
+
+
+print(f"NumPy {np.__version__}, pandas {pd.__version__}")
 ```
 
 ```text
-Python đang chạy: D:\Python\python.exe
-Đã nạp thư viện. CPU: một BLAS thread; seed mặc định: 42.
+NumPy 2.5.4, pandas 3.0.6
 ```
 
-## 3. Dataset, làm sạch và chia tập
+## 2. Dữ liệu
 
-Dùng [UCI SMS Spam Collection](https://archive.ics.uci.edu/dataset/228/sms+spam+collection).
-Bản GitHub không kèm dataset hoặc model đã huấn luyện. Notebook tự tải dữ liệu từ UCI khi chưa có và tạo model trên máy người chạy. Phần kết quả lưu sẵn chỉ giữ số liệu tổng hợp và ví dụ demo tự tạo.
+Bộ [UCI SMS Spam Collection](https://archive.ics.uci.edu/dataset/228/sms+spam+collection) gồm 5.574 tin nhắn tiếng Anh có nhãn. Ta chuyển chữ về chữ thường, gộp khoảng trắng và bỏ các tin trùng nội dung. Bước loại trùng làm **trước** khi chia tập để một tin không xuất hiện ở hai tập.
 
-Mỗi dòng gồm `nhãn<TAB>tin nhắn`. Dataset gốc đọc được 5.574 dòng.
-Chữ thường và khoảng trắng được chuẩn hóa; giữ một bản cho mỗi nội dung. Nếu cùng nội dung có nhãn mâu thuẫn thì loại cả nhóm.
+`stratified_split(df, (0.7, 0.15, 0.15), seed=42)` xáo riêng từng lớp bằng `np.random.default_rng(42)` rồi cắt theo tỷ lệ. Với lớp $c$ có $n_c$ tin:
 
-Chia gần **70% train / 15% validation / 15% test**, stratification giữ tỷ lệ hai lớp gần nhau, seed 42.
+$$
+n_c^{\mathrm{train}} = \mathrm{round}(0{,}7 n_c), \qquad n_c^{\mathrm{val}} = \mathrm{round}(0{,}15 n_c), \qquad n_c^{\mathrm{test}} = n_c - n_c^{\mathrm{train}} - n_c^{\mathrm{val}},
+$$
 
-| Tập | Vai trò |
+nên ba tập có cùng tỷ lệ spam.
+
+| Tập | Dùng để |
 |---|---|
-| Train | Học vocabulary, IDF, mean PCA, hướng chiếu và classifier |
-| Validation | Chọn k trong grid |
-| Test | Đánh giá cuối sau khi khóa cấu hình |
-
-**fit** nghĩa là học tham số; **transform** dùng tham số đã học để biến đổi dữ liệu;
-**predict** đưa biểu diễn đã biến đổi vào classifier để trả nhãn.
-Token chỉ có trong validation/test không được bổ sung vào vocabulary train.
+| Train (70%) | học vocabulary, idf, $V_k$, $\mu$, $w$, $b$ |
+| Validation (15%) | chọn k |
+| Test (15%) | đánh giá **một lần** ở cuối |
 
 ```python
-if not DEFAULT_DATA.is_file():
-    download_data()  # Chỉ cần Internet khi chưa có file UCI cục bộ.
-
-splits = prepare_data_and_audit(DEFAULT_DATA, results, logger)
-audit = json.loads((results / "data_summary.json").read_text(encoding="utf-8"))
-print(f"Dòng gốc: {audit['raw_rows']}; bản trùng loại: {audit['duplicates_removed']}; "
-      f"còn: {audit['clean_rows']}")
-summary = pd.DataFrame([
-    {"Tập": name, "Tổng": len(part),
-     "Ham": int(part.label.eq("ham").sum()), "Spam": int(part.label.eq("spam").sum())}
-    for name, part in splits.items()
-])
-show_table(summary)
+download_data(DEFAULT_DATA)                   # Chỉ tải khi máy chưa có file.
+splits = prepare_data(DEFAULT_DATA, RESULTS)  # Làm sạch rồi stratified_split(..., (0.7, 0.15, 0.15), seed=42)
+summary = json.loads((RESULTS / "data_summary.json").read_text(encoding="utf-8"))
+print(f"Đọc {summary['raw_rows']} dòng, bỏ {summary['duplicates_removed']} tin trùng "
+      f"→ còn {summary['clean_rows']} tin.")
+show_table(pd.DataFrame([
+    {"Tập": name, "Số tin": c["rows"], "Ham": c["ham"], "Spam": c["spam"],
+     "Tỷ lệ spam": c["spam"] / c["rows"]}
+    for name, c in summary["splits"].items()
+]))
+plots.plot_class_distribution(summary["class_counts"], FIGURES / "class_distribution.png")
+show_figure("class_distribution.png")
 ```
 
 ```text
-Dữ liệu: {"raw_rows": 5574, "empty_removed": 0, "conflicting_groups": 0, "conflicting_rows_removed": 0, "duplicates_removed": 415, "clean_rows": 5159, "class_counts": {"ham": 4517, "spam": 642}, "splits": {"train": {"rows": 3611, "class_counts": {"ham": 3162, "spam": 449}}, "validation": {"rows": 774, "class_counts": {"ham": 677, "spam": 97}}, "test": {"rows": 774, "class_counts": {"ham": 678, "spam": 96}}}, "raw_file_sha256": "7d039a24a6083ed9ef0f806ebad56bbb976e3aeb8de05669173bfdc4996c239d"}
+Đọc 5574 dòng, bỏ 415 tin trùng → còn 5159 tin.
 ```
 
-```text
-Dòng gốc: 5574; bản trùng loại: 415; còn: 5159
-```
+| Tập | Số tin | Ham | Spam | Tỷ lệ spam |
+|---|---|---|---|---|
+| train | 3611 | 3162 | 449 | 0.1243 |
+| validation | 774 | 678 | 96 | 0.1240 |
+| test | 774 | 677 | 97 | 0.1253 |
 
-| Tập | Tổng | Ham | Spam |
-| --- | --- | --- | --- |
-| train | 3611 | 3162 | 449 |
-| validation | 774 | 677 | 97 |
-| test | 774 | 678 | 96 |
+![Kết quả cell 4, output 3](<outputs/figures/class_distribution.png>)
 
-```python
-counts = pd.Series(audit["class_counts"]).reindex(["ham", "spam"])
-fig, ax = plt.subplots(figsize=(5.5, 3.4), layout="constrained")
-counts.plot.bar(ax=ax, rot=0, color=["#366a9f", "#d78532"])
-ax.set(title="Phân bố nhãn sau làm sạch", xlabel="Nhãn", ylabel="Số SMS")
-for position, count in enumerate(counts):
-    ax.text(position, count, str(count), ha="center", va="bottom")
-fig.savefig("outputs/figures/class_distribution.png", dpi=120)
-plt.close(fig)
-display(Image(filename="outputs/figures/class_distribution.png"))
-```
+**Nhận xét.** Spam chỉ chiếm 12,4–12,5% ở cả ba tập, nên một mô hình luôn đoán "ham" đã đạt accuracy khoảng 87,5% mà không bắt được tin spam nào. Vì vậy ta chọn k bằng **macro-F1** và theo dõi thêm **recall của lớp spam**.
 
-![Kết quả cell 5, output 1](<outputs/figures/class_distribution.png>)
+## 3. TF-IDF: biến văn bản thành ma trận
 
-Ham nhiều hơn spam, nên accuracy cao vẫn có thể đi kèm bỏ sót nhiều spam.
-Ta sẽ dùng **macro-F1** để chọn k, đồng thời đọc **spam recall** khi đánh giá cuối.
-
-## 4. TF-IDF: chuyển văn bản thành ma trận nhiều chiều
-
-Với N SMS và D từ, $X\in\mathbb{R}^{N\times D}$: mỗi hàng là một SMS, mỗi cột là một từ.
-Từ không xuất hiện trong SMS nhận zero. Cấu hình tối đa 1.000 từ, unigram,
-`min_df=2`, `sublinear_tf=True`, chuẩn hóa L2. Với tần suất $f>0$:
+Mỗi tin nhắn trở thành một hàng của ma trận $X \in \mathbb{R}^{N \times D}$, mỗi cột ứng với một từ. Ta tách từ bằng regex `\b\w\w+\b` (chuỗi chữ/số dài từ 2 ký tự), giữ các từ có trong ít nhất 2 tin train (`min_df=2`), rồi lấy 1000 từ xuất hiện nhiều nhất. Với từ $t$ xuất hiện $f$ lần trong một tin:
 
 $$
-\operatorname{tf}(f)=1+\log f,\qquad
-\operatorname{idf}(t)=\log\frac{1+N}{1+\operatorname{df}(t)}+1.
+\mathrm{tf} = 1 + \log f, \qquad
+\mathrm{idf}(t) = \log\frac{1 + N}{1 + \mathrm{df}(t)} + 1, \qquad
+x_t = \mathrm{tf} \cdot \mathrm{idf}(t).
 $$
 
-Nhân TF và IDF, rồi chuẩn hóa từng hàng. `df(t)` được tính từ train.
-CSR là cách lưu sparse, chỉ lưu giá trị khác zero và các chỉ số liên quan.
-Ô dưới minh họa TF-IDF trên train; các pipeline thí nghiệm sẽ tự fit cùng cấu hình trên đúng tập học.
+Trong đó $\mathrm{df}(t)$ là số tin train chứa $t$. Sau đó mỗi hàng được chia cho chuẩn L2 của nó. `fit` chỉ học vocabulary và idf trên train, còn validation/test chỉ đi qua `transform`.
 
 ```python
-vectorizer = make_pipeline().named_steps["tfidf"]
-X_train = vectorizer.fit_transform(splits["train"].text)
-D = X_train.shape[1]
-csr_bytes = X_train.data.nbytes + X_train.indices.nbytes + X_train.indptr.nbytes
-print("Shape TF-IDF train:", X_train.shape)
-print(f"Mật độ khác zero: {X_train.nnz / (X_train.shape[0] * D):.4%}")
-print(f"CSR: {csr_bytes:,} byte; nếu dense: {X_train.shape[0] * D * 8:,} byte")
+train_texts = splits["train"]["text"].tolist()
+y_train = to_binary(splits["train"]["label"])           # spam = 1, ham = 0
+vectorizer = TfidfVectorizer(max_features=1000, min_df=2).fit(train_texts)
+X_train = vectorizer.transform(train_texts)
+N, D = X_train.shape
+print(f"X_train: {N} tin × {D} từ; phần tử khác 0: {np.mean(X_train != 0):.2%}")
 
-first_sms = X_train[0].toarray().ravel()
-positions = np.flatnonzero(first_sms)[:8]
-show_table(pd.DataFrame({"Từ trong SMS đầu": vectorizer.get_feature_names_out()[positions],
-                         "TF-IDF": first_sms[positions]}))
+i = int(np.argmax(y_train))                             # tin spam đầu tiên trong train
+words = vectorizer.feature_names()
+nonzero = np.flatnonzero(X_train[i])
+print("Tin nhắn:", train_texts[i])
+show_table(pd.DataFrame({"Từ": [words[j] for j in nonzero], "TF-IDF": X_train[i, nonzero]}))
+print(f"Chuẩn L2 của hàng này: {np.linalg.norm(X_train[i]):.4f}")
 ```
 
 ```text
-Shape TF-IDF train: (3611, 1000)
-Mật độ khác zero: 1.0386%
-CSR: 464,496 byte; nếu dense: 28,888,000 byte
+X_train: 3611 tin × 1000 từ; phần tử khác 0: 1.04%
+Tin nhắn: get 3 lions england tone, reply lionm 4 mono or lionp 4 poly. 4 more go 2 www.ringtones.co.uk, the original n best. tones 3gbp network operator rates apply
 ```
 
-| Từ trong SMS đầu | TF-IDF |
-| --- | --- |
-| goin | 0.5445 |
-| of | 0.2807 |
-| thinkin | 0.5874 |
-| time | 0.3658 |
-| what | 0.3331 |
-| you | 0.1869 |
+| Từ | TF-IDF |
+|---|---|
+| apply | 0.2768 |
+| best | 0.2485 |
+| co | 0.2566 |
+| get | 0.1614 |
+| go | 0.1758 |
+| more | 0.2244 |
+| network | 0.2768 |
+| operator | 0.3011 |
+| or | 0.1618 |
+| poly | 0.2904 |
+| rates | 0.3053 |
+| reply | 0.2069 |
+| the | 0.1172 |
+| tone | 0.2629 |
+| tones | 0.2845 |
+| uk | 0.2417 |
+| www | 0.2289 |
 
-## 5. SVD và xấp xỉ hạng thấp bằng NumPy
+```text
+Chuẩn L2 của hàng này: 1.0000
+```
 
-Với rank r, SVD dạng compact:
+**Nhận xét.** Trung bình mỗi tin chỉ dùng khoảng 10 trong 1000 từ (1,04% phần tử khác 0), nên X rất thưa. Các từ ít gặp như *rates*, *operator* có trọng số cao hơn từ phổ biến như *the*; đó là tác dụng của idf.
 
-$$X=U\Sigma V^T,\qquad X_k=U_k\Sigma_kV_k^T,\qquad Z=XV_k=U_k\Sigma_k.$$
+## 4. SVD: giảm chiều bằng xấp xỉ hạng thấp
 
-U có kích thước N×r, V là D×r, các cột là left/right singular vectors.
-Các singular values $\sigma_j$ nằm trên đường chéo của $\Sigma$, sắp giảm dần.
-Rank là số hướng tuyến tính độc lập. Giữ k hướng cho Z kích thước N×k.
+**Mô hình.** $X = U \Sigma V^T$. Vì $X^T X = V \Sigma^2 V^T$, các cột $v_j$ của $V$ là vector riêng của $X^T X$ và $\sigma_j = \sqrt{\lambda_j}$. Giữ $k$ hướng đầu:
 
-**Giảm còn 100 chiều là tạo 100 tổ hợp tuyến tính, không phải chọn 100 từ.**
-Với SVD exact, sai số tái tạo tối ưu theo chuẩn Frobenius:
+$$
+Z = X V_k \in \mathbb{R}^{N \times k}, \qquad X_k = Z V_k^T.
+$$
 
-$$\|X-X_k\|_F^2=\sum_{j>k}\sigma_j^2.$$
+Mỗi tin nhắn chỉ còn $k$ tọa độ. Mỗi tọa độ là tổ hợp tuyến tính của cả 1000 từ, chứ không phải $k$ từ được chọn ra.
 
-Ta kiểm chứng trên ma trận 6×4; dữ liệu nhỏ này chỉ minh họa toán, không dùng thay dataset SMS.
+**Tối ưu bằng orthogonal iteration.** Bắt đầu từ ma trận ngẫu nhiên $Q$ ($D \times k$), lặp $Q \leftarrow \mathrm{QR}(X^T X Q)$. Phép nhân khuếch đại các hướng có $\lambda$ lớn, còn QR giữ các cột trực chuẩn, nên $Q$ tiến dần về $V_k$. Vòng lặp dừng khi mọi $\lambda_j = q_j^T X^T X q_j$ thay đổi ít hơn $10^{-8}\lambda_1$.
+
+**Loss và score** (score là tỷ lệ năng lượng giữ lại):
+
+$$
+\mathrm{loss} = \Vert X - X_k \Vert_F^2 = \sum_{j \gt k} \sigma_j^2, \qquad
+\mathrm{score} = \frac{\sum_{j \le k} \sigma_j^2}{\Vert X \Vert_F^2}.
+$$
+
+Định lý Eckart–Young cho biết không có ma trận hạng $k$ nào có loss nhỏ hơn $X_k$. Ô dưới kiểm tra hai điều: các cột của $V_k$ đúng là vector riêng (phần dư $X^TXv_j - \lambda_j v_j$ gần 0), và loss của SVD nhỏ hơn hẳn loss khi chiếu lên 100 hướng ngẫu nhiên.
 
 ```python
-math_result = run_demo()
-save_json(results / "math_demo.json", math_result)
-X_small = np.array(math_result["matrix"])
-U, singular_values, Vt = np.linalg.svd(X_small, full_matrices=False)
-k_demo = 2
-Z_small = X_small @ Vt[:k_demo].T
-X_small_k = Z_small @ Vt[:k_demo]
-squared_error = np.linalg.norm(X_small - X_small_k, "fro") ** 2
-tail_energy = np.sum(singular_values[k_demo:] ** 2)
-np.testing.assert_allclose(squared_error, tail_energy, atol=1e-8)
-print("X:")
-print(np.round(X_small, 3))
-print("Shape U, singular values, Vt:", U.shape, singular_values.shape, Vt.shape)
-print("Singular values:", np.round(singular_values, 4))
-print("Shape Z với k=2:", Z_small.shape)
-print(f"Sai số bình phương: {squared_error:.6f}; tổng sigma bị bỏ bình phương: {tail_energy:.6f}")
+svd = TruncatedSVD(k=100).fit(X_train)
+print(f"Orthogonal iteration hội tụ sau {svd.n_iter_} vòng.")
+print("σ_1..σ_5 =", svd.singular_values_[:5].round(3))
+
+# 1) v_j là vector riêng của XᵀX: phần dư rất nhỏ so với λ_1.
+G, V, lam = X_train.T @ X_train, svd.components_.T, svd.singular_values_ ** 2
+print(f"max_j ‖XᵀX·v_j − λ_j·v_j‖ / λ_1 = {np.max(np.linalg.norm(G @ V - V * lam, axis=0)) / lam[0]:.1e}")
+
+# 2) Eckart–Young: so với chiếu lên 100 hướng ngẫu nhiên (trực chuẩn).
+Q, _ = np.linalg.qr(np.random.default_rng(0).standard_normal((D, 100)))
+X_random = X_train @ Q @ Q.T
+print(f"loss SVD = {svd.loss():.1f};  loss với 100 hướng ngẫu nhiên = {np.sum((X_train - X_random) ** 2):.1f}")
+
+energy = svd.singular_values_ ** 2   # σ_j² giảm dần; với k nhỏ hơn chỉ cần lấy k số đầu
+show_table(pd.DataFrame([
+    {"k": k, "loss = ‖X − X_k‖²": svd.total_energy_ - energy[:k].sum(),
+     "score = năng lượng giữ lại": energy[:k].sum() / svd.total_energy_}
+    for k in K_VALUES
+]))
 ```
 
 ```text
-X:
-[[ 3.914 -3.928  5.542  0.951]
- [-2.853 -5.58   4.867  0.386]
- [ 2.95  -3.714  5.709  0.899]
- [ 3.198  0.287  5.693  0.203]
- [ 4.106 -3.733  5.687  0.568]
- [ 2.445 -3.454  6.086  0.56 ]]
-Shape U, singular values, Vt: (6, 4) (4,) (4, 4)
-Singular values: [17.1679  6.3932  2.6738  0.3411]
-Shape Z với k=2: (6, 2)
-Sai số bình phương: 7.265551; tổng sigma bị bỏ bình phương: 7.265551
+Orthogonal iteration hội tụ sau 2414 vòng.
+σ_1..σ_5 = [11.217  6.078  5.675  5.558  5.421]
+max_j ‖XᵀX·v_j − λ_j·v_j‖ / λ_1 = 2.0e-05
+loss SVD = 2043.3;  loss với 100 hướng ngẫu nhiên = 3232.5
 ```
 
-## 6. PCA và mối liên hệ với SVD
+| k | loss = ‖X − X_k‖² | score = năng lượng giữ lại |
+|---|---|---|
+| 10 | 3212.0912 | 0.1055 |
+| 50 | 2553.5868 | 0.2889 |
+| 100 | 2043.2843 | 0.4310 |
 
-PCA trừ mean từng cột rồi chọn các hướng có variance lớn:
+**Nhận xét.** Phần dư chỉ cỡ $10^{-5}$, và loss của SVD (2043) nhỏ hơn nhiều so với khi dùng 100 hướng ngẫu nhiên (3232), đúng như Eckart–Young. Dù vậy, 100 chiều (10% số cột) chỉ giữ được 43,1% năng lượng, vì sau $\sigma_1 = 11{,}2$ các $\sigma_j$ giảm rất chậm (từ 6,1 xuống 2,9 ở $j = 100$).
 
-$$X_c=X-\mu,\qquad C=\frac{X_c^TX_c}{N-1},\qquad Z=X_cW_k.$$
+## 5. PCA: SVD trên dữ liệu đã trừ mean
 
-Nếu $X_c=U\Sigma V^T$, suy ra:
+**Mô hình.** Trừ mean $\mu$ (học trên train): $X_c = X - \mu$. Ma trận hiệp phương sai là
 
-$$C=V\frac{\Sigma^2}{N-1}V^T,\qquad \lambda_j=\frac{\sigma_j^2}{N-1},\qquad W_k=V_k.$$
+$$
+C = \frac{X_c^T X_c}{N - 1} = V \frac{\Sigma^2}{N - 1} V^T,
+$$
 
-Đây là liên hệ cốt lõi: **PCA có thể tính bằng SVD của dữ liệu đã center**.
-Truncated SVD trực tiếp trên TF-IDF không center, nên nhìn chung khác PCA.
-Ô sau tự tính mean, covariance, eigenvectors và phép chiếu bằng NumPy.
+nên các thành phần chính chính là $V_k$ trong SVD của $X_c$, và phương sai của thành phần $j$ bằng $\sigma_j^2 / (N - 1)$. Vì vậy PCA dùng lại đúng orthogonal iteration ở mục 4 với $X_c$ thay cho $X$, rồi lấy $Z = (X - \mu) V_k$. Validation và test cũng trừ $\mu$ của train.
+
+**Loss và score.** $\mathrm{loss} = \Vert X_c - X_{c,k} \Vert_F^2 = \sum_{j \gt k} \sigma_j^2$ và $\mathrm{score} = \sum_{j \le k} \sigma_j^2 / \sum_j \sigma_j^2$, tức tỷ lệ phương sai giữ lại.
 
 ```python
-mean = X_small.mean(axis=0)
-X_centered = X_small - mean
-covariance = X_centered.T @ X_centered / (len(X_small) - 1)
-eigenvalues, eigenvectors = np.linalg.eigh(covariance)
-order = np.argsort(eigenvalues)[::-1]
-eigenvalues = eigenvalues[order]
-W = eigenvectors[:, order[:k_demo]]
-Z_pca = X_centered @ W
+pca = PCA(k=100).fit(X_train)
+print(f"Orthogonal iteration hội tụ sau {pca.n_iter_} vòng.")
+print("Phương sai 5 thành phần đầu σ_j²/(N−1) =", pca.explained_variance_[:5].round(5))
 
-_, centered_singular_values, centered_Vt = np.linalg.svd(X_centered, full_matrices=False)
-values_from_svd = centered_singular_values**2 / (len(X_small) - 1)
-projector_error = np.linalg.norm(W @ W.T - centered_Vt[:k_demo].T @ centered_Vt[:k_demo])
-np.testing.assert_allclose(eigenvalues, values_from_svd, atol=1e-8)
-np.testing.assert_allclose(projector_error, 0, atol=1e-8)
-print("Eigenvalues:", np.round(eigenvalues, 6))
-print("Sigma²/(N-1):", np.round(values_from_svd, 6))
-print(f"Sai số projector PCA/SVD: {projector_error:.3e}")
-print(f"Sai số tái tạo SVD đầy đủ: {math_result['full_reconstruction_error']:.3e}")
-show_table(pd.DataFrame(math_result["errors_by_k"])[
-    ["k", "svd_reconstruction_error", "pca_reconstruction_error"]])
+X_c = X_train - pca.mean_
+G_c, V_c, lam_c = X_c.T @ X_c, pca.components_.T, pca.singular_values_ ** 2
+print(f"max_j ‖X_cᵀX_c·v_j − λ_j·v_j‖ / λ_1 = {np.max(np.linalg.norm(G_c @ V_c - V_c * lam_c, axis=0)) / lam_c[0]:.1e}")
+
+variance = pca.singular_values_ ** 2
+show_table(pd.DataFrame([
+    {"k": k, "loss = ‖X_c − X_c,k‖²": pca.total_energy_ - variance[:k].sum(),
+     "score = phương sai giữ lại": variance[:k].sum() / pca.total_energy_}
+    for k in K_VALUES
+]))
+cos = abs(svd.components_[0] @ pca.mean_) / np.linalg.norm(pca.mean_)
+print(f"cos(góc giữa v_1 của SVD và μ) = {cos:.3f}")
+
+spectrum = {name: {"singular_values": m.singular_values_.tolist(), "total_energy": m.total_energy_}
+            for name, m in (("svd", svd), ("pca", pca))}
+plots.plot_retention(spectrum, FIGURES / "retention.png")
+show_figure("retention.png")
 ```
 
 ```text
-Eigenvalues: [8.322617 2.338056 0.061063 0.022858]
-Sigma²/(N-1): [8.322617 2.338056 0.061063 0.022858]
-Sai số projector PCA/SVD: 8.900e-16
-Sai số tái tạo SVD đầy đủ: 1.237e-14
+Orthogonal iteration hội tụ sau 2405 vòng.
+Phương sai 5 thành phần đầu σ_j²/(N−1) = [0.0118  0.00903 0.00885 0.00818 0.00763]
+max_j ‖X_cᵀX_c·v_j − λ_j·v_j‖ / λ_1 = 3.5e-05
 ```
 
-| k | svd_reconstruction_error | pca_reconstruction_error |
-| --- | --- | --- |
-| 1 | 6.9382 | 3.4799 |
-| 2 | 2.6955 | 0.6478 |
-| 3 | 0.3411 | 0.3381 |
-| 4 | 0.0000 | 0.0000 |
+| k | loss = ‖X_c − X_c,k‖² | score = phương sai giữ lại |
+|---|---|---|
+| 10 | 3202.1495 | 0.0819 |
+| 50 | 2549.0764 | 0.2692 |
+| 100 | 2040.0539 | 0.4151 |
 
-Vector khác dấu vẫn có thể chỉ cùng một hướng, nên ta so **projector** của không gian con.
-Sai số tái tạo giảm khi tăng k; PCA có thêm bước xử lý mean, cần giữ khác biệt này khi diễn giải hai cột.
+```text
+cos(góc giữa v_1 của SVD và μ) = 0.989
+```
 
-Với TF-IDF thật, trừ mean trực tiếp làm nhiều zero thành khác zero. Nhánh PCA chuyển dense
-và kiểm tra giới hạn 128 MiB cho ma trận đầu vào; đây chưa phải peak RAM.
-Covariance chỉ được dựng trong demo nhỏ. Trên văn bản, PCA dùng solver randomized;
-Truncated SVD nhận sparse input trực tiếp.
+![Kết quả cell 13, output 4](<outputs/figures/retention.png>)
 
-## 7. Xây ba pipeline và huấn luyện trên train
+**Nhận xét.** Hướng đầu của SVD gần trùng với hướng của vector mean ($\cos = 0{,}989$): SVD dùng hướng mạnh nhất để biểu diễn "tin nhắn trung bình", còn PCA đã trừ $\mu$ từ trước. Ở k = 100, PCA giữ 41,5% phương sai; score của SVD và PCA đo trên hai ma trận khác nhau ($X$ và $X_c$) nên không so trực tiếp.
 
-Logistic Regression học một hàm điểm tuyến tính rồi dùng sigmoid để ước lượng xác suất spam.
-Dù có tên Regression, đây là classifier. Giữ C=1, L2, `max_iter=2000`, ngưỡng phân loại 0,5.
-Hai reducer cùng seed 42, PCA không whitening. Baseline giữ nguyên TF-IDF.
+## 6. Logistic Regression: từ loss function đến score function
+
+Đây là phần trọng tâm. Logistic Regression đi qua 5 bước: mô hình → loss → gradient → tối ưu → dự đoán và score. Mỗi bước là một hoặc hai hàm trong `src/logistic.py`, và docstring của hàm ghi đúng công thức của bước đó.
+
+### 6.1. Mô hình
+
+$$
+z = Xw + b, \qquad p = \sigma(z) = \frac{1}{1 + e^{-z}} = P(\mathrm{spam} \mid x).
+$$
+
+Hàm sigmoid ép điểm $z$ về khoảng $(0, 1)$. Hàm trong code: `sigmoid`, `predict_proba`.
 
 ```python
-for method in ["baseline", "pca", "svd"]:
-    pipeline = make_pipeline(method, None if method == "baseline" else 50)
-    print(method.upper(), "→", " → ".join(
-        type(step).__name__ for _, step in pipeline.steps))
+z = np.array([-6.0, -2.0, 0.0, 2.0, 6.0])
+print("z    =", z)
+print("σ(z) =", sigmoid(z).round(4))
 ```
 
 ```text
-BASELINE → TfidfVectorizer → LogisticRegression
-PCA → TfidfVectorizer → ToDense → PCA → LogisticRegression
-SVD → TfidfVectorizer → TruncatedSVD → LogisticRegression
+z    = [-6. -2.  0.  2.  6.]
+σ(z) = [0.0025 0.1192 0.5    0.8808 0.9975]
 ```
 
-### 7.1. Thử k bằng validation
+**Nhận xét.** $z \gt 0$ thì $p \gt 0{,}5$ (dự đoán spam); $|z|$ càng lớn thì mô hình càng chắc chắn.
 
-Dùng k∈{10,50,100}, chỉ lấy giá trị hợp lệ theo kích thước train và D.
-`fit_evaluate` gọi fit trên train, predict trên validation, trả model và một dòng metrics.
-Thời gian fit bao gồm cả TF-IDF, reducer/chuyển dense nếu có và classifier.
+### 6.2. Loss function: Binary Cross-Entropy + L2
 
-**Macro-F1** là trung bình F1 hai lớp với trọng số bằng nhau. Spam precision đo độ đúng
-khi báo spam; spam recall đo tỷ lệ spam thực sự được bắt; spam-F1 kết hợp precision và recall.
+$$
+J(w, b) = -\frac{1}{N} \sum_{i=1}^{N} \Big[ y_i \log p_i + (1 - y_i) \log(1 - p_i) \Big] + \frac{\lambda}{2N} \Vert w \Vert^2 .
+$$
+
+- Một tin spam ($y = 1$) mà mô hình cho $p$ nhỏ sẽ có $-\log p$ lớn, tức bị phạt nặng khi đoán sai mà lại tự tin.
+- Số hạng L2 giữ $w$ nhỏ để tránh overfit. Ta dùng $\lambda = 1$, tương đương `C = 1` của bản trước; $b$ không bị phạt.
+- $p$ được clip vào $[10^{-12}, 1 - 10^{-12}]$ để tránh $\log 0$. Hàm trong code: `loss`.
 
 ```python
-baseline, baseline_row, _ = fit_evaluate(
-    "baseline", None, splits["train"], splits["validation"], "validation")
-validation_rows = [baseline_row]
-candidate_k = [k for k in K_VALUES if 1 <= k < min(len(splits["train"]) - 1, D)]
-assert candidate_k, "Dataset quá nhỏ cho grid đã chọn."
-
-for method in ["pca", "svd"]:
-    for k in candidate_k:
-        _, row, _ = fit_evaluate(method, k, splits["train"], splits["validation"], "validation")
-        validation_rows.append(row)
-        logger.info("Validation %s k=%d: macro-F1=%.6f; fit=%.4fs", method, k,
-                    row["macro_f1"], row["fit_seconds"])
-
-validation = pd.DataFrame(validation_rows)
-assert validation.feature_fingerprint.nunique() == 1  # Cùng vocabulary và IDF.
-validation.to_csv(results / "validation_metrics.csv", index=False)
-show_table(validation[["method", "k", "accuracy", "macro_f1", "spam_recall", "fit_seconds"]])
+clf = LogisticRegressionGD(lam=1.0)
+clf.w, clf.b = np.zeros(D), 0.0
+print(f"J(w = 0, b = 0) = {clf.loss(X_train, y_train):.4f}   (log 2 = {np.log(2):.4f}, vì lúc này p = 0.5 với mọi tin)")
 ```
 
 ```text
-Validation pca k=10: macro-F1=0.843138; fit=0.3928s
+J(w = 0, b = 0) = 0.6931   (log 2 = 0.6931, vì lúc này p = 0.5 với mọi tin)
 ```
 
-```text
-Validation pca k=50: macro-F1=0.893168; fit=0.5219s
-```
+### 6.3. Gradient
 
-```text
-Validation pca k=100: macro-F1=0.899132; fit=0.5376s
-```
+Dùng $\sigma'(z) = \sigma(z)(1 - \sigma(z))$, đạo hàm của $J$ rút gọn thành
 
-```text
-Validation svd k=10: macro-F1=0.843138; fit=0.1685s
-```
+$$
+\frac{\partial J}{\partial w} = \frac{1}{N} X^T (p - y) + \frac{\lambda}{N} w, \qquad
+\frac{\partial J}{\partial b} = \frac{1}{N} \sum_{i} (p_i - y_i).
+$$
 
-```text
-Validation svd k=50: macro-F1=0.897044; fit=0.1978s
-```
-
-```text
-Validation svd k=100: macro-F1=0.901890; fit=0.2756s
-```
-
-| method | k | accuracy | macro_f1 | spam_recall | fit_seconds |
-| --- | --- | --- | --- | --- | --- |
-| baseline | — | 0.9716 | 0.9288 | 0.7835 | 0.1290 |
-| pca | 10.0000 | 0.9406 | 0.8431 | 0.6082 | 0.3928 |
-| pca | 50.0000 | 0.9587 | 0.8932 | 0.7010 | 0.5219 |
-| pca | 100.0000 | 0.9599 | 0.8991 | 0.7320 | 0.5376 |
-| svd | 10.0000 | 0.9406 | 0.8431 | 0.6082 | 0.1685 |
-| svd | 50.0000 | 0.9599 | 0.8970 | 0.7113 | 0.1978 |
-| svd | 100.0000 | 0.9612 | 0.9019 | 0.7320 | 0.2756 |
-
-### 7.2. Khóa k trước khi xem test
-
-Chọn macro-F1 validation cao nhất từng phương pháp; hòa thì chọn k nhỏ hơn.
-Đây chỉ là lựa chọn tốt nhất trong grid đã thử. Sau bước này mới refit trên train + validation,
-đánh giá test và lưu pipeline. Không chọn lại k từ điểm test.
+**Gradient check:** so gradient tính theo công thức với sai phân trung tâm $\frac{J(\theta + \varepsilon) - J(\theta - \varepsilon)}{2\varepsilon}$ ($\varepsilon = 10^{-6}$). Phép so được làm trên 50 tin nhắn, tại một điểm $(w, b)$ ngẫu nhiên. Hàm trong code: `gradient`, `gradient_check`.
 
 ```python
-selected = {method: choose_k(validation, method) for method in ["pca", "svd"]}
-save_json(results / "selected_k.json", {
-    "criterion": "Maximum validation macro-F1; ties choose smaller k",
-    "selected_k": selected, "candidate_k": candidate_k,
+error = gradient_check(X_train[:50], y_train[:50], lam=1.0)
+print(f"Sai số lớn nhất giữa gradient công thức và gradient số ({D + 1} tham số): {error:.2e}")
+assert error < 1e-6
+```
+
+```text
+Sai số lớn nhất giữa gradient công thức và gradient số (1001 tham số): 2.14e-09
+```
+
+**Nhận xét.** Sai số chỉ khoảng $2 \cdot 10^{-9}$, nhỏ hơn nhiều so với ngưỡng $10^{-6}$, nên công thức gradient ở trên là đúng.
+
+### 6.4. Tối ưu bằng gradient descent
+
+$$
+w \leftarrow w - \eta \frac{\partial J}{\partial w}, \qquad b \leftarrow b - \eta \frac{\partial J}{\partial b}.
+$$
+
+Bắt đầu từ $w = 0$, $b = 0$ và lưu $J$ sau mỗi epoch. Vòng lặp dừng khi đủ 20.000 epoch hoặc khi $\vert J^{(t)} - J^{(t-1)} \vert \lt 10^{-10}$. Hàm trong code: `fit`.
+
+**Chọn learning rate η.** Gọi $L$ là hằng số Lipschitz của gradient, tức gradient đổi nhanh nhất đến mức nào. Vì $\sigma' \le 1/4$, ta có $L \le \frac{1}{4} \lambda_{\max}\big([X\ \mathbf{1}]^T [X\ \mathbf{1}]\big)/N + \lambda/N$, và với $\eta \lt 2/L$ thì $J$ chắc chắn giảm sau mỗi bước.
+
+Trị riêng lớn nhất không vượt quá tổng đường chéo: $\lambda_{\max} \le \sum_i (\Vert x_i \Vert^2 + 1) \le 2N$. Lý do là mỗi hàng TF-IDF có chuẩn 1, hoặc bằng 0 nếu tin không chứa từ nào trong vocabulary. Với đặc trưng $Z$ của SVD/PCA cũng có $\Vert Z \Vert_F^2 \le N$. Suy ra $L \le 0{,}5 + \lambda/N$ cho cả ba pipeline, và ta chọn **η = 2**.
+
+Ô dưới tính $L$ thật bằng `top_eigenvectors` của mục 4 với $k = 1$ (lúc này orthogonal iteration chính là power iteration), rồi thử ba giá trị η, mỗi giá trị chạy 2000 epoch.
+
+```python
+M = np.hstack([X_train, np.ones((N, 1))])                    # thêm cột 1 ứng với b
+L = 0.25 * top_eigenvectors(M.T @ M, 1)[0][0] / N + 1.0 / N
+print(f"L = {L:.4f}  →  J chắc chắn giảm khi η < 2/L = {2 / L:.2f}")
+
+histories = {lr: LogisticRegressionGD(lr=lr, epochs=2000, tol=0).fit(X_train, y_train).loss_history_
+             for lr in (0.5, 2, 50)}
+plots.plot_learning_rates(histories, FIGURES / "learning_rate.png")
+show_figure("learning_rate.png")
+```
+
+```text
+L = 0.2575  →  J chắc chắn giảm khi η < 2/L = 7.77
+```
+
+![Kết quả cell 24, output 2](<outputs/figures/learning_rate.png>)
+
+**Nhận xét.** $L = 0{,}2575$, nên ngưỡng an toàn là $\eta \lt 7{,}77$. Với η = 50, loss dao động; với η = 0,5, loss giảm quá chậm; còn η = 2 vừa an toàn vừa giảm nhanh.
+
+```python
+clf = LogisticRegressionGD(lam=1.0, lr=2.0, epochs=20000, tol=1e-10).fit(X_train, y_train)
+history = np.array(clf.loss_history_)
+print(f"Dừng sau {clf.n_epochs_} epoch: J giảm từ {history[0]:.4f} xuống {history[-1]:.6f}")
+print("J giảm sau mọi epoch:", bool(np.all(np.diff(history) <= 0)))
+grad_w, grad_b = clf.gradient(X_train, y_train)
+print(f"Tại điểm dừng: ‖∂J/∂w‖ = {np.linalg.norm(grad_w):.1e}, |∂J/∂b| = {abs(grad_b):.1e}")
+```
+
+```text
+Dừng sau 8298 epoch: J giảm từ 0.6931 xuống 0.152365
+J giảm sau mọi epoch: True
+Tại điểm dừng: ‖∂J/∂w‖ = 7.1e-06, |∂J/∂b| = 1.5e-07
+```
+
+**Nhận xét.** GD dừng sau 8298 epoch vì $|\Delta J| \lt 10^{-10}$ (chưa chạm giới hạn 20.000), và $J$ giảm sau mọi epoch, từ 0,6931 xuống 0,1524. Gradient tại điểm dừng gần bằng 0, nên GD đã đến rất gần cực tiểu; vì $J$ lồi, đó là cực tiểu toàn cục.
+
+### 6.5. Dự đoán và score function
+
+Dự đoán $\hat y = 1$ (spam) nếu $p \ge 0{,}5$, ngược lại $\hat y = 0$ (ham). Score function đếm bốn loại kết quả:
+
+| | Dự đoán ham | Dự đoán spam |
+|---|---|---|
+| **Thật là ham** | TN | FP (báo nhầm) |
+| **Thật là spam** | FN (bỏ sót) | TP |
+
+$$
+\mathrm{accuracy} = \frac{TP + TN}{N}, \quad
+P = \frac{TP}{TP + FP}, \quad
+R = \frac{TP}{TP + FN}, \quad
+F_1 = \frac{2PR}{P + R}, \quad
+F_1^{\mathrm{macro}} = \frac{F_1^{\mathrm{spam}} + F_1^{\mathrm{ham}}}{2}.
+$$
+
+$F_1^{\mathrm{ham}}$ tính giống hệt, chỉ đổi vai để coi ham là lớp dương. Hàm trong code: `predict`, `score`, cùng `confusion_matrix` và `classification_scores` trong `src/metrics.py`.
+
+**Ví dụ tính tay.** Giả sử mô hình dự đoán 6 tin như bảng dưới. Khi đó TP = 1, FN = 1, FP = 1, TN = 3, và
+
+- accuracy = 4/6 ≈ 0,667;
+- spam: P = 1/(1+1) = 0,5, R = 1/(1+1) = 0,5, nên $F_1^{\mathrm{spam}}$ = 0,5;
+- ham: P = 3/(3+1) = 0,75, R = 3/(3+1) = 0,75, nên $F_1^{\mathrm{ham}}$ = 0,75;
+- macro-F1 = (0,5 + 0,75)/2 = 0,625.
+
+```python
+example = pd.DataFrame({
+    "Tin nhắn": ["WIN a free prize, call now", "Claim your cash reward today",
+                 "Free lunch at the office?", "See you at 7", "Ok thanks", "Meeting moved to Monday"],
+    "Thật": ["spam", "spam", "ham", "ham", "ham", "ham"],
+    "Dự đoán": ["spam", "ham", "spam", "ham", "ham", "ham"],
 })
-logger.info("Đã khóa k theo validation: %s", selected)
-print("k được chọn:", selected)
-print("Số mẫu refit:", len(splits["train"]) + len(splits["validation"]))
-
-refit_and_evaluate_test(splits, selected, OUTPUT_ROOT, logger)
-save_run_config(results, candidate_k)
-make_plots(OUTPUT_ROOT)
-test_metrics = pd.read_csv(results / "test_metrics.csv")
-show_table(test_metrics[["method", "k", "accuracy", "macro_f1", "spam_precision", "spam_recall", "spam_f1"]])
+show_table(example)
+y_true, y_pred = to_binary(example["Thật"]), to_binary(example["Dự đoán"])
+(tn, fp), (fn, tp) = confusion_matrix(y_true, y_pred)
+print(f"TP = {tp}, FN = {fn}, FP = {fp}, TN = {tn}")
+show_table(pd.DataFrame([classification_scores(y_true, y_pred)]))
 ```
+
+| Tin nhắn | Thật | Dự đoán |
+|---|---|---|
+| WIN a free prize, call now | spam | spam |
+| Claim your cash reward today | spam | ham |
+| Free lunch at the office? | ham | spam |
+| See you at 7 | ham | ham |
+| Ok thanks | ham | ham |
+| Meeting moved to Monday | ham | ham |
 
 ```text
-Đã khóa k theo validation: {'pca': 100, 'svd': 100}
+TP = 1, FN = 1, FP = 1, TN = 3
 ```
 
-```text
-k được chọn: {'pca': 100, 'svd': 100}
-Số mẫu refit: 4385
-```
+| accuracy | spam_precision | spam_recall | spam_f1 | ham_f1 | macro_f1 |
+|---|---|---|---|---|---|
+| 0.6667 | 0.5000 | 0.5000 | 0.5000 | 0.7500 | 0.6250 |
 
-```text
-TEST baseline: accuracy=0.972868 macro-F1=0.930971 spam-recall=0.781250
-```
-
-```text
-TEST pca: accuracy=0.954780 macro-F1=0.875954 spam-recall=0.635417
-```
-
-```text
-TEST svd: accuracy=0.953488 macro-F1=0.871684 spam-recall=0.625000
-```
-
-| method | k | accuracy | macro_f1 | spam_precision | spam_recall | spam_f1 |
-| --- | --- | --- | --- | --- | --- | --- |
-| baseline | — | 0.9729 | 0.9310 | 1.0000 | 0.7812 | 0.8772 |
-| pca | 100.0000 | 0.9548 | 0.8760 | 1.0000 | 0.6354 | 0.7771 |
-| svd | 100.0000 | 0.9535 | 0.8717 | 1.0000 | 0.6250 | 0.7692 |
-
-## 8. Đồ thị kết quả và nhận xét
-
-### 8.1. Macro-F1 theo k trên validation
+Code cho đúng các số đã tính tay. Áp dụng cùng score function cho baseline vừa học (fit trên train, đánh giá trên validation):
 
 ```python
-display(Image(filename="outputs/figures/validation_f1.png"))
+X_val = vectorizer.transform(splits["validation"]["text"].tolist())
+y_val = to_binary(splits["validation"]["label"])
+show_table(pd.DataFrame([clf.score(X_val, y_val)]))
 ```
 
-![Kết quả cell 19, output 1](<outputs/figures/validation_f1.png>)
+| accuracy | spam_precision | spam_recall | spam_f1 | ham_f1 | macro_f1 |
+|---|---|---|---|---|---|
+| 0.9690 | 0.9737 | 0.7708 | 0.8605 | 0.9826 | 0.9215 |
 
-Trong grid này, tăng k cải thiện macro-F1; cả PCA và SVD chọn k=100 nhưng chưa đạt baseline.
-Lượng phương sai/năng lượng lớn không tự bảo đảm giữ đủ tín hiệu cần cho nhãn.
+**Nhận xét.** Trên validation, baseline có precision spam 97,4% nhưng recall chỉ 77,1%: khi đã báo spam thì gần như luôn đúng, nhưng cứ 100 tin spam thì bỏ sót khoảng 23 tin. Macro-F1 = 0,9215.
 
-### 8.2. Confusion matrix trên test
+## 7. Chọn k trên validation
 
-Hàng là nhãn thật, cột là nhãn dự đoán.
-**False positive:** ham bị báo spam. **False negative:** spam bị bỏ sót thành ham.
+$$
+k^* = \arg\max_{k \in \lbrace 10, 50, 100 \rbrace} F_1^{\mathrm{macro}}(k).
+$$
+
+Ở đây $F_1^{\mathrm{macro}}(k)$ là macro-F1 trên validation; nếu bằng nhau thì lấy $k$ nhỏ hơn. Với từng pipeline và từng $k$, ta fit trên train rồi gọi `score` trên validation. Hàm `run_validation_sweep` lặp lại đúng các bước của mục 3–6 cho mỗi cấu hình. **Test chưa được dùng ở bước này.**
 
 ```python
-display(Image(filename="outputs/figures/test_confusion.png"))
-matrices = json.loads((results / "confusion_matrices.json").read_text(encoding="utf-8"))
-for method, matrix in matrices["matrices"].items():
-    caught, missed = matrix[1][1], matrix[1][0]
-    print(f"{method}: bắt {caught}/{caught + missed} spam, bỏ sót {missed}; "
-          f"ham bị báo spam: {matrix[0][1]}")
-```
-
-![Kết quả cell 21, output 1](<outputs/figures/test_confusion.png>)
-
-```text
-baseline: bắt 75/96 spam, bỏ sót 21; ham bị báo spam: 0
-pca: bắt 61/96 spam, bỏ sót 35; ham bị báo spam: 0
-svd: bắt 60/96 spam, bỏ sót 36; ham bị báo spam: 0
-```
-
-Baseline bắt spam tốt hơn hai mô hình giảm chiều trong test này. Precision bằng 1 ở tập test
-không có nghĩa mọi SMS tương lai đều được dự đoán đúng.
-
-### 8.3. Phương sai PCA và năng lượng SVD
-
-$$R_{PCA}=\frac{\sum_{j\le k}\lambda_j}{\sum_j\lambda_j},\qquad
-E_{SVD}=\frac{\|XV_k\|_F^2}{\|X\|_F^2}.$$
-
-Hai đại lượng có centering khác nhau, không coi là cùng một tỷ lệ “thông tin ngôn ngữ”.
-Biểu đồ dưới dùng train 3.611 mẫu, không phải tập test.
-
-```python
-display(Image(filename="outputs/figures/retention.png"))
-show_table(validation.loc[validation.method.ne("baseline"),
-    ["method", "k", "pca_variance_retention", "svd_energy_retention"]])
-```
-
-![Kết quả cell 23, output 1](<outputs/figures/retention.png>)
-
-| method | k | pca_variance_retention | svd_energy_retention |
-| --- | --- | --- | --- |
-| pca | 10.0000 | 0.0809 | — |
-| pca | 50.0000 | 0.2675 | — |
-| pca | 100.0000 | 0.4099 | — |
-| svd | 10.0000 | — | 0.1041 |
-| svd | 50.0000 | — | 0.2862 |
-| svd | 100.0000 | — | 0.4280 |
-
-### 8.4. Thời gian và dung lượng thực tế
-
-Fit được đo một lần mỗi cấu hình, một BLAS thread. Inference đo toàn pipeline trên cùng batch,
-lấy median năm lượt sau warm-up. Thời gian phụ thuộc máy và có thể không tăng đều theo k.
-
-```python
-display(Image(filename="outputs/figures/fit_time.png"))
-show_table(test_metrics[["method", "fit_seconds", "inference_batch_seconds"]])
-display(Image(filename="outputs/figures/representation_size.png"))
-show_table(test_metrics[["method", "D", "output_dimensions", "dimension_reduction",
-                         "tfidf_csr_bytes", "representation_bytes", "pca_dense_input_bytes"]])
-```
-
-![Kết quả cell 25, output 1](<outputs/figures/notebook/cell_25_output_1.png>)
-
-| method | fit_seconds | inference_batch_seconds |
-| --- | --- | --- |
-| baseline | 0.1293 | 0.0208 |
-| pca | 0.6794 | 0.0255 |
-| svd | 0.3021 | 0.0190 |
-
-![Kết quả cell 25, output 3](<outputs/figures/representation_size.png>)
-
-| method | D | output_dimensions | dimension_reduction | tfidf_csr_bytes | representation_bytes | pca_dense_input_bytes |
-| --- | --- | --- | --- | --- | --- | --- |
-| baseline | 1000 | 1000 | 0.0000 | 563448 | 563448 | 0 |
-| pca | 1000 | 100 | 0.9000 | 563448 | 3508000 | 35080000 |
-| svd | 1000 | 100 | 0.9000 | 563448 | 3508000 | 0 |
-
-Hình đo train khi khảo sát k; bảng đo refit train + validation.
-Giảm từ 1.000 xuống 100 chiều là giảm 90% số cột, nhưng Z là dense còn TF-IDF gốc rất sparse,
-nên dung lượng representation có thể tăng. Số byte trên là kích thước mảng, chưa phải peak RAM.
-
-## 9. Demo một tin nhắn mới
-
-Model `.joblib` chứa cả TF-IDF, reducer và classifier. Dự đoán dùng pipeline đã lưu, không fit lại.
-Demo chỉ minh họa cách sử dụng; đánh giá chính là trên 774 mẫu test.
-
-```python
-messages = [
-    "Can we meet at the library tomorrow?",
-    "Congratulations! You have won a free prize. Call now to claim your cash reward!",
-]
-demo_rows = []
-for method in ["baseline", "pca", "svd"]:
-    saved_model = joblib.load(f"outputs/models/{method}.joblib")
-    for message in messages:
-        demo_rows.append({"method": method, **predict_message(saved_model, message)})
-show_table(pd.DataFrame(demo_rows))
-print(json.dumps(demo_rows[-1], ensure_ascii=False, indent=2))
-```
-
-| method | text | prediction | spam_probability |
-| --- | --- | --- | --- |
-| baseline | Can we meet at the library tomorrow? | ham | 0.0152 |
-| baseline | Congratulations! You have won a free prize. Call now to claim your cash reward! | spam | 0.9683 |
-| pca | Can we meet at the library tomorrow? | ham | 0.0158 |
-| pca | Congratulations! You have won a free prize. Call now to claim your cash reward! | spam | 0.9849 |
-| svd | Can we meet at the library tomorrow? | ham | 0.0153 |
-| svd | Congratulations! You have won a free prize. Call now to claim your cash reward! | spam | 0.9861 |
-
-```text
-{
-  "method": "svd",
-  "text": "Congratulations! You have won a free prize. Call now to claim your cash reward!",
-  "prediction": "spam",
-  "spam_probability": 0.9860611766640226
-}
-```
-
-Xác suất spam là ước lượng của classifier, chưa được hiệu chỉnh riêng.
-
-## 10. Kiểm tra tính đúng
-
-Các tests kiểm tra phép phân rã, mean train, dữ liệu trùng, token validation không lọt vocabulary,
-sparse/dense và lưu/load pipeline. Các tests bổ sung kiểm tra chuyển notebook thành Markdown.
-
-```python
-test_suite = unittest.defaultTestLoader.discover("tests")
-test_log = io.StringIO()
-test_result = unittest.TextTestRunner(stream=test_log, verbosity=1).run(test_suite)
-(results / "test_output.txt").write_text(test_log.getvalue(), encoding="utf-8")
-print(test_log.getvalue())
-assert test_result.wasSuccessful(), "Cần sửa tests trước khi kết luận hoàn tất."
-print(f"Đạt {test_result.testsRun} tests.")
+validation, spectrum = run_validation_sweep(splits)
+validation.to_csv(RESULTS / "validation_metrics.csv", index=False)
+save_json(RESULTS / "spectrum.json", spectrum)
+selected = {method: choose_k(validation, method) for method in ("svd", "pca")}
+save_json(RESULTS / "selected_k.json", selected)
+show_table(validation[["method", "k", "accuracy", "spam_precision", "spam_recall", "macro_f1",
+                       "retained_ratio", "decomposition_iterations", "gd_epochs"]])
+print("k chọn theo validation:", selected)
+plots.plot_validation_f1(validation, FIGURES / "validation_f1.png")
+show_figure("validation_f1.png")
 ```
 
 ```text
-............................
-----------------------------------------------------------------------
-Ran 28 tests in 0.208s
-
-OK
-
-Đạt 28 tests.
+Validation baseline k=None: macro-F1=0.9215, GD 8298 epoch
 ```
 
-## 11. Kết luận và giới hạn
+```text
+Validation svd      k=10: macro-F1=0.8349, GD 5196 epoch
+```
+
+```text
+Validation svd      k=50: macro-F1=0.8759, GD 6013 epoch
+```
+
+```text
+Validation svd      k=100: macro-F1=0.9065, GD 6388 epoch
+```
+
+```text
+Validation pca      k=10: macro-F1=0.8441, GD 5022 epoch
+```
+
+```text
+Validation pca      k=50: macro-F1=0.8759, GD 6057 epoch
+```
+
+```text
+Validation pca      k=100: macro-F1=0.9027, GD 6388 epoch
+```
+
+| method | k | accuracy | spam_precision | spam_recall | macro_f1 | retained_ratio | decomposition_iterations | gd_epochs |
+|---|---|---|---|---|---|---|---|---|
+| baseline | — | 0.9690 | 0.9737 | 0.7708 | 0.9215 | — | — | 8298 |
+| svd | 10 | 0.9419 | 0.9636 | 0.5521 | 0.8349 | 0.1055 | 263 | 5196 |
+| svd | 50 | 0.9535 | 0.9545 | 0.6562 | 0.8759 | 0.2889 | 1352 | 6013 |
+| svd | 100 | 0.9638 | 0.9722 | 0.7292 | 0.9065 | 0.4310 | 2414 | 6388 |
+| pca | 10 | 0.9444 | 0.9649 | 0.5729 | 0.8441 | 0.0819 | 341 | 5022 |
+| pca | 50 | 0.9535 | 0.9545 | 0.6562 | 0.8759 | 0.2692 | 893 | 6057 |
+| pca | 100 | 0.9625 | 0.9718 | 0.7188 | 0.9027 | 0.4151 | 2405 | 6388 |
+
+```text
+k chọn theo validation: {'svd': 100, 'pca': 100}
+```
+
+![Kết quả cell 34, output 10](<outputs/figures/validation_f1.png>)
+
+**Nhận xét.** Macro-F1 tăng theo k và cao nhất ở k = 100 cho cả SVD (0,9065) và PCA (0,9027), nhưng vẫn thấp hơn baseline (0,9215). Ở k = 10, recall spam chỉ còn 55–57%: giữ quá ít chiều làm mất nhiều tín hiệu nhận ra spam.
+
+## 8. Kết quả trên test
+
+$$
+\mathrm{model} = \mathrm{fit}(\mathrm{train} \cup \mathrm{validation}, k^*), \qquad \mathrm{score}(\mathrm{model}, \mathrm{test}).
+$$
+
+Điểm test chỉ được tính đúng một lần. Mô hình được lưu bằng `np.savez` (các mảng số) cùng một file JSON (vocabulary) trong `outputs/models/`.
 
 ```python
-baseline_f1 = test_metrics.loc[test_metrics.method.eq("baseline"), "macro_f1"].iloc[0]
-observations = []
-for method in ["pca", "svd"]:
-    row = test_metrics.loc[test_metrics.method.eq(method)].iloc[0]
-    observations.append({
-        "Phương pháp": method.upper(), "k": int(row.output_dimensions),
-        "Giảm chiều (%)": 100 * row.dimension_reduction,
-        "Macro-F1 test": row.macro_f1, "Giảm F1 so baseline": baseline_f1 - row.macro_f1,
-        "Dung lượng Z/CSR": row.representation_bytes / row.tfidf_csr_bytes,
-    })
-show_table(pd.DataFrame(observations))
+test = refit_and_test(splits, selected, OUTPUT_ROOT)
+save_run_config(RESULTS)
+show_table(test[["method", "k", "accuracy", "spam_precision", "spam_recall", "spam_f1", "macro_f1"]])
+
+loss_history = json.loads((RESULTS / "loss_history.json").read_text(encoding="utf-8"))
+plots.plot_loss_curves(loss_history, FIGURES / "loss_curve.png")
+show_figure("loss_curve.png")
+for method, h in loss_history.items():
+    print(f"{method:8s}: {len(h) - 1} epoch, J cuối = {h[-1]:.4f}, "
+          f"J giảm sau mọi epoch: {bool(np.all(np.diff(h) <= 0))}")
 ```
 
-| Phương pháp | k | Giảm chiều (%) | Macro-F1 test | Giảm F1 so baseline | Dung lượng Z/CSR |
-| --- | --- | --- | --- | --- | --- |
-| PCA | 100 | 90.0000 | 0.8760 | 0.0550 | 6.2260 |
-| SVD | 100 | 90.0000 | 0.8717 | 0.0593 | 6.2260 |
+```text
+TEST baseline: accuracy=0.9780, macro-F1=0.9468
+```
 
-**Trong phạm vi thí nghiệm này:** baseline phân loại tốt nhất. Giảm chiều mạnh làm giảm khả năng bắt spam,
-và ở k=100 chưa tiết kiệm tổng thời gian hoặc dung lượng biểu diễn. Đây là một kết quả có ý nghĩa:
-phép xấp xỉ ma trận tối ưu không tự động tối ưu tín hiệu phân loại.
+```text
+TEST svd     : accuracy=0.9703, macro-F1=0.9259
+```
 
-Giới hạn: một split, ba k, vocabulary 1.000 từ, SMS tiếng Anh; chưa kiểm định ý nghĩa thống kê,
-chưa hiệu chỉnh xác suất. k=100 là tốt nhất trong grid hiện tại, không phải mọi giá trị k.
+```text
+TEST pca     : accuracy=0.9703, macro-F1=0.9259
+```
 
-## 12. Tài liệu tham khảo
+| method | k | accuracy | spam_precision | spam_recall | spam_f1 | macro_f1 |
+|---|---|---|---|---|---|---|
+| baseline | — | 0.9780 | 0.9762 | 0.8454 | 0.9061 | 0.9468 |
+| svd | 100 | 0.9703 | 0.9744 | 0.7835 | 0.8686 | 0.9259 |
+| pca | 100 | 0.9703 | 0.9744 | 0.7835 | 0.8686 | 0.9259 |
 
-- [UCI SMS Spam Collection](https://archive.ics.uci.edu/dataset/228/sms+spam+collection).
-- [PCA — scikit-learn](https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html).
-- [Truncated SVD — scikit-learn](https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.TruncatedSVD.html).
+![Kết quả cell 37, output 5](<outputs/figures/loss_curve.png>)
+
+```text
+baseline: 9765 epoch, J cuối = 0.1427, J giảm sau mọi epoch: True
+svd     : 7273 epoch, J cuối = 0.1559, J giảm sau mọi epoch: True
+pca     : 7343 epoch, J cuối = 0.1564, J giảm sau mọi epoch: True
+```
+
+**Nhận xét.** Trên test, baseline đạt macro-F1 0,9468, còn SVD và PCA với k = 100 cùng đạt 0,9259, thấp hơn 0,021. Loss của cả ba pipeline giảm sau mọi epoch, và GD dừng trước giới hạn 20.000 epoch.
+
+```python
+matrices = json.loads((RESULTS / "confusion_matrices.json").read_text(encoding="utf-8"))["matrices"]
+plots.plot_confusion_matrices(matrices, FIGURES / "test_confusion.png")
+show_figure("test_confusion.png")
+for method, ((tn, fp), (fn, tp)) in matrices.items():
+    print(f"{method:8s}: bắt {tp}/{tp + fn} spam, bỏ sót {fn}; báo nhầm {fp}/{tn + fp} ham")
+```
+
+![Kết quả cell 39, output 1](<outputs/figures/test_confusion.png>)
+
+```text
+baseline: bắt 82/97 spam, bỏ sót 15; báo nhầm 2/677 ham
+svd     : bắt 76/97 spam, bỏ sót 21; báo nhầm 2/677 ham
+pca     : bắt 76/97 spam, bỏ sót 21; báo nhầm 2/677 ham
+```
+
+**Nhận xét.** Ba mô hình cùng báo nhầm 2/677 tin ham. Khác biệt nằm ở số spam bị bỏ sót: 15/97 tin với baseline, 21/97 tin với SVD và PCA.
+
+Thử hai tin nhắn mới bằng mô hình đã lưu. Các mô hình được load lại từ file, không fit lại:
+
+```python
+rows = []
+for method in METHODS:
+    model = load_pipeline(OUTPUT_ROOT / "models" / method)
+    rows += [{"pipeline": method, **predict_message(model, text)} for text in DEMO_MESSAGES]
+show_table(pd.DataFrame(rows))
+```
+
+| pipeline | text | prediction | spam_probability |
+|---|---|---|---|
+| baseline | Can we meet at the library tomorrow? | ham | 0.0148 |
+| baseline | Congratulations! You have won a free prize. Call now to claim your cash reward! | spam | 0.9696 |
+| svd | Can we meet at the library tomorrow? | ham | 0.0113 |
+| svd | Congratulations! You have won a free prize. Call now to claim your cash reward! | spam | 0.9855 |
+| pca | Can we meet at the library tomorrow? | ham | 0.0123 |
+| pca | Congratulations! You have won a free prize. Call now to claim your cash reward! | spam | 0.9856 |
+
+**Nhận xét.** Cả ba mô hình đều phân loại đúng hai tin. Đây chỉ là minh họa cách dùng mô hình đã lưu; đánh giá chính là bảng test ở trên.
+
+## 9. Kết luận
+
+```python
+base = test.set_index("method").loc["baseline", "macro_f1"]
+show_table(pd.DataFrame([
+    {"Pipeline": row.method, "Số chiều": 1000 if row.method == "baseline" else int(row.k),
+     "Macro-F1 test": row.macro_f1, "Chênh lệch so với baseline": row.macro_f1 - base}
+    for row in test.itertuples()
+]))
+```
+
+| Pipeline | Số chiều | Macro-F1 test | Chênh lệch so với baseline |
+|---|---|---|---|
+| baseline | 1000 | 0.9468 | 0.0000 |
+| svd | 100 | 0.9259 | -0.0209 |
+| pca | 100 | 0.9259 | -0.0209 |
+
+- **Từ loss đến score.** Mọi bước học đều làm một loss nhỏ lại rồi được đánh giá bằng một score. SVD/PCA cực tiểu sai số tái tạo $\Vert X - X_k \Vert_F^2$ (score: năng lượng/phương sai giữ lại). Logistic Regression cực tiểu cross-entropy bằng gradient descent (score: macro-F1 trên dữ liệu chưa dùng để học).
+- **Kết quả.** Giảm từ 1000 xuống 100 chiều (bớt 90% số cột) làm macro-F1 test giảm từ 0,9468 xuống 0,9259, chủ yếu vì bỏ sót thêm 6 tin spam (21 so với 15).
+- **Giả thuyết về nguyên nhân.** SVD/PCA chọn các hướng giữ nhiều năng lượng/phương sai nhất mà không nhìn nhãn. Khi fit trên train (mục 4–5), 100 chiều chỉ giữ 43,1% năng lượng (SVD) và 41,5% phương sai (PCA), nên phần bị bỏ đi có thể vẫn chứa tín hiệu phân biệt spam. Loss tái tạo nhỏ nhất không đồng nghĩa với phân loại tốt nhất. Đồ án chưa có thí nghiệm riêng để kiểm chứng giả thuyết này.
+- **SVD và PCA cho kết quả gần như nhau** (cùng confusion matrix trên test). Một lý do có thể là hướng đầu của SVD gần trùng $\mu$ ($\cos = 0{,}989$), còn Logistic Regression đã có hệ số chặn $b$ để xử lý phần trung bình.
+- **Giới hạn.** Đồ án chỉ dùng một lần chia dữ liệu, ba giá trị k, vocabulary 1000 từ và SMS tiếng Anh; chênh lệch giữa các mô hình chưa được kiểm định thống kê.
+
+## 10. Tài liệu tham khảo
+
+- T. A. Almeida, J. M. Gómez Hidalgo, A. Yamakami (2011). *Contributions to the Study of SMS Spam Filtering: New Collection and Results*. ACM DocEng. Dữ liệu: [UCI SMS Spam Collection](https://archive.ics.uci.edu/dataset/228/sms+spam+collection).
+- C. D. Manning, P. Raghavan, H. Schütze (2008). *Introduction to Information Retrieval*, chương 6 (TF-IDF) và chương 18 (SVD, xấp xỉ hạng thấp).
+- L. N. Trefethen, D. Bau (1997). *Numerical Linear Algebra*, SIAM: SVD, QR và lặp trực giao.
+- C. Eckart, G. Young (1936). *The approximation of one matrix by another of lower rank*. Psychometrika 1(3).
+- C. M. Bishop (2006). *Pattern Recognition and Machine Learning*, mục 4.3 (Logistic Regression) và chương 12 (PCA).
